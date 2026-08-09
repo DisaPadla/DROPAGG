@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { prisma } from "@/lib/prisma";
 import { CatalogFilters } from "@/components/catalog/catalog-filters";
 import { PGliteCatalogView } from "@/components/catalog/pglite-catalog-view";
@@ -142,12 +143,14 @@ export default async function Home({ searchParams }: HomePageProps) {
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row gap-8">
         
-        {/* Interactive Filters Sidebar */}
-        <CatalogFilters
-          availableCategories={availableCategories}
-          availableBrands={brands}
-          maxPriceLimit={500}
-        />
+        {/* Interactive Filters Sidebar wrapped in Suspense */}
+        <Suspense fallback={<div className="w-full md:w-64 h-96 bg-zinc-900/40 animate-pulse rounded-xl" />}>
+          <CatalogFilters
+            availableCategories={availableCategories}
+            availableBrands={brands}
+            maxPriceLimit={500}
+          />
+        </Suspense>
 
         {/* Product Grid Powered by PGlite WASM Postgres */}
         <div className="flex-1">
@@ -157,20 +160,24 @@ export default async function Home({ searchParams }: HomePageProps) {
               <p className="text-sm text-muted-foreground">{products.length} Results</p>
             </div>
 
-            {/* Interactive Sort Control */}
-            <CatalogSort />
+            {/* Interactive Sort Control wrapped in Suspense */}
+            <Suspense fallback={<div className="w-32 h-10 bg-zinc-900/40 animate-pulse rounded-md" />}>
+              <CatalogSort />
+            </Suspense>
           </div>
 
-          <PGliteCatalogView
-            initialProducts={products}
-            availableCategories={availableCategories}
-            availableBrands={brands}
-            selectedBrands={brandFilters}
-            selectedCategories={categoryFilters}
-            maxPriceFilter={maxPriceFilter}
-            sortBy={sortBy}
-            selectedGender={genderFilter}
-          />
+          <Suspense fallback={<div className="w-full h-96 bg-zinc-900/40 animate-pulse rounded-xl" />}>
+            <PGliteCatalogView
+              initialProducts={products}
+              availableCategories={availableCategories}
+              availableBrands={brands}
+              selectedBrands={brandFilters}
+              selectedCategories={categoryFilters}
+              maxPriceFilter={maxPriceFilter}
+              sortBy={sortBy}
+              selectedGender={genderFilter}
+            />
+          </Suspense>
         </div>
 
       </div>
