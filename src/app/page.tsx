@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { prisma } from "@/lib/prisma";
+import { ensureTablesExist } from "@/lib/db-init";
 import { CatalogFilters } from "@/components/catalog/catalog-filters";
 import { PGliteCatalogView } from "@/components/catalog/pglite-catalog-view";
 import { WelcomeScreen } from "@/components/home/welcome-screen";
@@ -28,11 +29,25 @@ interface HomePageProps {
 export default async function Home({ searchParams }: HomePageProps) {
   const params = await searchParams;
 
-  // Check if workspace has any brands connected
-  const dbBrands = await prisma.brand.findMany({
-    select: { name: true },
-    distinct: ["name"],
-  });
+  let dbBrands: { name: string }[] = [];
+  try {
+    dbBrands = await prisma.brand.findMany({
+      select: { name: true },
+      distinct: ["name"],
+    });
+  } catch (err: any) {
+    console.warn("[Home Page] Tables missing or DB error, auto-initializing Supabase tables...", err.message);
+    await ensureTablesExist();
+    try {
+      dbBrands = await prisma.brand.findMany({
+        select: { name: true },
+        distinct: ["name"],
+      });
+    } catch (retryErr) {
+      console.error("[Home Page] Failed to query brands after auto-init:", retryErr);
+    }
+  }
+
   const brands = dbBrands.map((b: { name: string }) => b.name);
 
   // If first-time user / 0 brands added, show Welcome Screen!
@@ -82,11 +97,16 @@ export default async function Home({ searchParams }: HomePageProps) {
     ];
   }
 
-  const rawProducts: ProductWithRelations[] = await prisma.product.findMany({
-    where,
-    include: { variants: true, brand: true },
-    orderBy,
-  });
+  let rawProducts: ProductWithRelations[] = [];
+  try {
+    rawProducts = await prisma.product.findMany({
+      where,
+      include: { variants: true, brand: true },
+      orderBy,
+    });
+  } catch (err) {
+    console.error("[Home Page] Failed to query products:", err);
+  }
 
   // Serialize Decimal objects and Date objects for React Server Component boundary
   let products = rawProducts.map((p: any) => ({
@@ -126,10 +146,16 @@ export default async function Home({ searchParams }: HomePageProps) {
   }
 
   // Get distinct categories from local database
-  const dbCategories = await prisma.product.findMany({
-    select: { category: true },
-    distinct: ["category"],
-  });
+  let dbCategories: { category: string | null }[] = [];
+  try {
+    dbCategories = await prisma.product.findMany({
+      select: { category: true },
+      distinct: ["category"],
+    });
+  } catch (err) {
+    console.error("[Home Page] Failed to query categories:", err);
+  }
+
   const rawCategories = dbCategories
     .map((c: { category: string | null }) => c.category)
     .filter((c: string | null): c is string => !!c && c.trim() !== "");
