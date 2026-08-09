@@ -117,7 +117,7 @@ export const shopifyIngestorWorker = new Worker(
 
       await prisma.brand.update({
         where: { id: brand.id },
-        update: { syncStatus: "ACTIVE" }
+        data: { syncStatus: "ACTIVE" }
       });
 
       console.log(`[Ingestor] Finished Tier 2 scraping for ${brand.name}. Processed ${count} items.`);
@@ -222,7 +222,7 @@ export const shopifyIngestorWorker = new Worker(
 
       await prisma.brand.update({
         where: { id: brand.id },
-        update: { syncStatus: "ACTIVE" }
+        data: { syncStatus: "ACTIVE" }
       });
 
       console.log(`[Ingestor] Ingestion completed for ${brand.name}. Total products: ${products.length}`);
@@ -230,7 +230,7 @@ export const shopifyIngestorWorker = new Worker(
       console.error(`[Ingestor] Job failed for brand ${brand.name}:`, error);
       await prisma.brand.update({
         where: { id: brand.id },
-        update: { syncStatus: "FAILED" }
+        data: { syncStatus: "FAILED" }
       });
       throw error;
     }

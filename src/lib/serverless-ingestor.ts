@@ -207,7 +207,7 @@ export async function syncBrandServerless(brandId: string): Promise<number> {
 
   await prisma.brand.update({
     where: { id: brand.id },
-    update: { syncStatus: "ACTIVE" },
+    data: { syncStatus: "ACTIVE" },
   });
 
   return processedCount;
