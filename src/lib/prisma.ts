@@ -4,7 +4,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 import { meiliClient, PRODUCTS_INDEX } from "./meilisearch";
 
-const globalForPrisma = global as unknown as { prisma: any, prismaBase: PrismaClient };
+const globalForPrisma = global as unknown as { prisma: any; prismaBase: PrismaClient };
 
 export const prisma = globalForPrisma.prisma || (() => {
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
@@ -15,7 +15,7 @@ export const prisma = globalForPrisma.prisma || (() => {
   return prismaBase.$extends({
     query: {
       product: {
-        async upsert({ args, query }) {
+        async upsert({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
           // Execute the actual DB query
           const result = await query(args);
           
@@ -29,26 +29,28 @@ export const prisma = globalForPrisma.prisma || (() => {
           });
 
           if (fullProduct) {
-            // Format for Meilisearch (Denormalized)
-            const searchDoc = {
-              id: fullProduct.id,
-              title: fullProduct.title,
-              brand: fullProduct.brand.name,
-              category: fullProduct.category,
-              description: fullProduct.description,
-              mainImage: fullProduct.mainImage,
-              createdAt: fullProduct.createdAt.getTime(),
-              // Variants array for facet filtering
-              variants: fullProduct.variants.map((v: any) => ({
-                size: v.size,
-                availability: v.availability,
-                normalizedPrice: v.normalizedPrice ? Number(v.normalizedPrice) : null
-              }))
-            };
+            try {
+              const sizes = Array.from(new Set(fullProduct.variants.map(v => v.size).filter(Boolean)));
+              const minPrice = Math.min(...fullProduct.variants.map(v => Number(v.rawPrice)));
+              const hasStock = fullProduct.variants.some(v => v.availability === 'IN_STOCK');
 
-            // Push to Meilisearch asynchronously (don't block the DB transaction)
-            meiliClient.index(PRODUCTS_INDEX).addDocuments([searchDoc])
-              .catch(err => console.error("[Meilisearch Sync Error]", err));
+              await meiliClient.index(PRODUCTS_INDEX).addDocuments([{
+                id: fullProduct.id,
+                title: fullProduct.title,
+                description: fullProduct.description,
+                category: fullProduct.category,
+                brandName: fullProduct.brand.name,
+                brandDomain: fullProduct.brand.domain,
+                mainImage: fullProduct.mainImage,
+                canonicalUrl: fullProduct.canonicalUrl,
+                sizes: sizes,
+                minPrice: isFinite(minPrice) ? minPrice : 0,
+                inStock: hasStock,
+                createdAt: Math.floor(fullProduct.createdAt.getTime() / 1000)
+              }]);
+            } catch (err) {
+              console.warn("[Meilisearch Sync Warning] Failed to index product:", err);
+            }
           }
 
           return result;
@@ -58,4 +60,4 @@ export const prisma = globalForPrisma.prisma || (() => {
   });
 })();
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
