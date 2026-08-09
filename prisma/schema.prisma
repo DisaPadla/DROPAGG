@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PlatformType {
+  SHOPIFY
+  WOOCOMMERCE
+  TILDA
+  OPENCART
+  CUSTOM
+}
+
+enum AvailabilityStatus {
+  IN_STOCK
+  OUT_OF_STOCK
+}
+
+model User {
+  id        String      @id @default(uuid())
+  email     String      @unique
+  name      String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  userBrands UserBrand[]
+}
+
+model UserBrand {
+  id        String   @id @default(uuid())
+  userId    String
+  brandId   String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand     Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, brandId])
+}
+
+model Brand {
+  id               String       @id @default(uuid())
+  name             String
+  domain           String       @unique
+  platformType     PlatformType
+  syncStatus       String       @default("ACTIVE") // ACTIVE, PAUSED, ERROR
+  baseCountry      String       // ISO 3166-1 alpha-2 e.g., 'US', 'UA'
+  defaultCurrency  String       // ISO 4217 e.g., 'USD', 'UAH'
+  lastPolledHash   String?      // Used for lightweight polling
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  products         Product[]
+  userBrands       UserBrand[]
+}
+
+model Product {
+  id               String       @id @default(uuid())
+  brandId          String
+  canonicalUrl     String       @unique
+  externalId       String?      // ID in the source system (e.g. Shopify Product ID)
+  title            String
+  description      String?
+  category         String?
+  mainImage        String
+  
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  brand            Brand        @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  variants         ProductVariant[]
+}
+
+model ProductVariant {
+  id               String             @id @default(uuid())
+  productId        String
+  externalId       String?            // ID in the source system
+  size             String?            // e.g., 'S', 'M', 'L', 'XL', 'OS'
+  color            String?
+  sku              String?
+  availability     AvailabilityStatus @default(OUT_OF_STOCK)
+  
+  rawPrice         Decimal            @db.Decimal(10, 2)
+  currency         String             // Base currency of this variant
+  normalizedPrice  Decimal?           @db.Decimal(10, 2) // System default currency (e.g., USD)
+
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  product          Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  dropEvents       DropEvent[]
+  
+  @@unique([productId, size, color])
+}
+
+model ExchangeRate {
+  id               Int      @id @default(autoincrement())
+  baseCurrency     String   @default("USD")
+  targetCurrency   String   @unique
+  rate             Decimal  @db.Decimal(14, 6)
+  lastUpdated      DateTime @default(now())
+}
+
+model DropEvent {
+  id               String             @id @default(uuid())
+  variantId        String
+  previousStatus   AvailabilityStatus
+  newStatus        AvailabilityStatus
+  timestamp        DateTime           @default(now())
+
+  variant          ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  
+  @@index([variantId, timestamp])
+}

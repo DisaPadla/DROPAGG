@@ -1,69 +1,177 @@
-import Image from "next/image";
+import { prisma } from "@/lib/prisma";
+import { CatalogFilters } from "@/components/catalog/catalog-filters";
+import { PGliteCatalogView } from "@/components/catalog/pglite-catalog-view";
+import { WelcomeScreen } from "@/components/home/welcome-screen";
+import { CatalogSort } from "@/components/catalog/catalog-sort";
+import { filterProductsByGender } from "@/lib/gender-classifier";
+import { Product, ProductVariant, Brand } from "@prisma/client";
 
-export default function Home() {
+type ProductWithRelations = Product & {
+  brand: Brand;
+  variants: ProductVariant[];
+};
+
+interface HomePageProps {
+  searchParams: Promise<{
+    categories?: string;
+    category?: string;
+    brands?: string;
+    maxPrice?: string;
+    sortBy?: string;
+    gender?: string;
+  }>;
+}
+
+export default async function Home({ searchParams }: HomePageProps) {
+  const params = await searchParams;
+
+  // Check if workspace has any brands connected
+  const dbBrands = await prisma.brand.findMany({
+    select: { name: true },
+    distinct: ["name"],
+  });
+  const brands = dbBrands.map((b: { name: string }) => b.name);
+
+  // If first-time user / 0 brands added, show Welcome Screen!
+  if (brands.length === 0) {
+    return <WelcomeScreen />;
+  }
+
+  const categoryFilters = params.categories
+    ? params.categories.split(",").filter(Boolean)
+    : params.category
+    ? [params.category]
+    : [];
+
+  const brandFilters = params.brands ? params.brands.split(",").filter(Boolean) : [];
+  const maxPriceFilter = params.maxPrice ? parseFloat(params.maxPrice) : undefined;
+  const sortBy = params.sortBy || "newest_drops";
+  const genderFilter = params.gender || "all";
+
+  const where: any = {};
+
+  if (brandFilters.length > 0) {
+    where.brand = { name: { in: brandFilters } };
+  }
+
+  if (categoryFilters.length > 0) {
+    where.OR = categoryFilters.map((cat: string) => ({
+      category: { contains: cat, mode: "insensitive" },
+    }));
+  }
+
+  if (maxPriceFilter !== undefined) {
+    where.variants = {
+      some: {
+        OR: [
+          { normalizedPrice: { lte: maxPriceFilter } },
+          { rawPrice: { lte: maxPriceFilter } },
+        ],
+      },
+    };
+  }
+
+  let orderBy: any = { createdAt: "desc" };
+  if (sortBy === "newest_stores") {
+    orderBy = [
+      { brand: { createdAt: "desc" } },
+      { createdAt: "desc" },
+    ];
+  }
+
+  const rawProducts: ProductWithRelations[] = await prisma.product.findMany({
+    where,
+    include: { variants: true, brand: true },
+    orderBy,
+  });
+
+  // Serialize Decimal objects and Date objects for React Server Component boundary
+  let products = rawProducts.map((p: any) => ({
+    ...p,
+    createdAt: p.createdAt ? p.createdAt.toISOString() : null,
+    updatedAt: p.updatedAt ? p.updatedAt.toISOString() : null,
+    variants: p.variants ? p.variants.map((v: any) => ({
+      ...v,
+      rawPrice: v.rawPrice ? Number(v.rawPrice) : 0,
+      normalizedPrice: v.normalizedPrice ? Number(v.normalizedPrice) : 0,
+      createdAt: v.createdAt ? v.createdAt.toISOString() : null,
+      updatedAt: v.updatedAt ? v.updatedAt.toISOString() : null,
+    })) : [],
+    brand: p.brand ? {
+      ...p.brand,
+      createdAt: p.brand.createdAt ? p.brand.createdAt.toISOString() : null,
+      updatedAt: p.brand.updatedAt ? p.brand.updatedAt.toISOString() : null,
+    } : null,
+  }));
+
+  // Apply strict gender filtering
+  products = filterProductsByGender(products, genderFilter);
+
+  // Handle price sorting in Server Component
+  if (sortBy === "price_asc") {
+    products.sort((a, b) => {
+      const priceA = Number(a.variants?.[0]?.normalizedPrice || a.variants?.[0]?.rawPrice || 0);
+      const priceB = Number(b.variants?.[0]?.normalizedPrice || b.variants?.[0]?.rawPrice || 0);
+      return priceA - priceB;
+    });
+  } else if (sortBy === "price_desc") {
+    products.sort((a, b) => {
+      const priceA = Number(a.variants?.[0]?.normalizedPrice || a.variants?.[0]?.rawPrice || 0);
+      const priceB = Number(b.variants?.[0]?.normalizedPrice || b.variants?.[0]?.rawPrice || 0);
+      return priceB - priceA;
+    });
+  }
+
+  // Get distinct categories from local database
+  const dbCategories = await prisma.product.findMany({
+    select: { category: true },
+    distinct: ["category"],
+  });
+  const rawCategories = dbCategories
+    .map((c: { category: string | null }) => c.category)
+    .filter((c: string | null): c is string => !!c && c.trim() !== "");
+
+  const availableCategories =
+    rawCategories.length > 0
+      ? Array.from(new Set<string>(rawCategories))
+      : ["Hoodies", "T-Shirts", "Jackets", "Pants", "Accessories"];
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex flex-col md:flex-row gap-8">
+        
+        {/* Interactive Filters Sidebar */}
+        <CatalogFilters
+          availableCategories={availableCategories}
+          availableBrands={brands}
+          maxPriceLimit={500}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+
+        {/* Product Grid Powered by PGlite WASM Postgres */}
+        <div className="flex-1">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">All Drops</h1>
+              <p className="text-sm text-muted-foreground">{products.length} Results</p>
+            </div>
+
+            {/* Interactive Sort Control */}
+            <CatalogSort />
+          </div>
+
+          <PGliteCatalogView
+            initialProducts={products}
+            availableCategories={availableCategories}
+            availableBrands={brands}
+            selectedBrands={brandFilters}
+            selectedCategories={categoryFilters}
+            maxPriceFilter={maxPriceFilter}
+            sortBy={sortBy}
+            selectedGender={genderFilter}
+          />
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+
+      </div>
     </div>
   );
 }
