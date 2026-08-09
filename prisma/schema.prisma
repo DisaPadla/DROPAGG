@@ -3,7 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum PlatformType {
@@ -100,18 +102,16 @@ model ExchangeRate {
   id               Int      @id @default(autoincrement())
   baseCurrency     String   @default("USD")
   targetCurrency   String   @unique
-  rate             Decimal  @db.Decimal(14, 6)
-  lastUpdated      DateTime @default(now())
+  rate             Decimal  @db.Decimal(18, 6)
+  updatedAt        DateTime @updatedAt
 }
 
 model DropEvent {
-  id               String             @id @default(uuid())
+  id               String         @id @default(uuid())
   variantId        String
   previousStatus   AvailabilityStatus
   newStatus        AvailabilityStatus
-  timestamp        DateTime           @default(now())
+  detectedAt       DateTime       @default(now())
 
-  variant          ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  
-  @@index([variantId, timestamp])
+  variant          ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 }
