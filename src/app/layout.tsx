@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
 import { LanguageProvider } from "@/context/language-context";
@@ -20,9 +21,13 @@ export default function RootLayout({
     <html lang="uk">
       <body className={`${inter.className} min-h-screen flex flex-col`}>
         <LanguageProvider>
-          <Navbar />
+          <Suspense fallback={<nav className="sticky top-0 z-50 w-full h-16 border-b bg-background" />}>
+            <Navbar />
+          </Suspense>
           <main className="flex-1">
-            {children}
+            <Suspense fallback={null}>
+              {children}
+            </Suspense>
           </main>
         </LanguageProvider>
       </body>

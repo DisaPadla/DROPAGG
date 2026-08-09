@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { BrandsList, BrandItem } from "@/components/brands/brands-list";
 
+export const dynamic = "force-dynamic";
+
 export default async function BrandsPage() {
   const allBrands = await prisma.brand.findMany({
     include: {
