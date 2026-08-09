@@ -1,31 +1,30 @@
-import { Queue, Worker, QueueEvents } from "bullmq";
+import { Queue, QueueEvents } from "bullmq";
 import Redis from "ioredis";
 
-// Configure Redis connection
-// In a real environment, use process.env.REDIS_URL
-const connection = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379", {
-  maxRetriesPerRequest: null,
-});
+// Lazy Redis connection helper - only connects if REDIS_URL is explicitly set in environment
+const getRedisConnection = () => {
+  if (!process.env.REDIS_URL) {
+    return null;
+  }
+  return new Redis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    enableOfflineQueue: false,
+  });
+};
 
-// 1. Ingestion Queue
-// Handles the heavy lifting: fetching large JSON feeds, processing them, and inserting into DB.
+const connection = getRedisConnection();
+
 export const ingestionQueueName = "ingestion-queue";
-export const ingestionQueue = new Queue(ingestionQueueName, { connection });
+export const ingestionQueue = connection ? new Queue(ingestionQueueName, { connection }) : null as any;
 
-// 2. Poller Queue
-// Handles the lightweight HEAD requests to check for hash changes before triggering full ingestion.
 export const pollerQueueName = "poller-queue";
-export const pollerQueue = new Queue(pollerQueueName, { connection });
+export const pollerQueue = connection ? new Queue(pollerQueueName, { connection }) : null as any;
 
-// Queue Events for Monitoring
-export const ingestionQueueEvents = new QueueEvents(ingestionQueueName, { connection });
-export const pollerQueueEvents = new QueueEvents(pollerQueueName, { connection });
+export const ingestionQueueEvents = connection ? new QueueEvents(ingestionQueueName, { connection }) : null as any;
+export const pollerQueueEvents = connection ? new QueueEvents(pollerQueueName, { connection }) : null as any;
 
-/**
- * Helper to gracefully close connections
- */
 export async function closeQueues() {
-  await ingestionQueue.close();
-  await pollerQueue.close();
-  await connection.quit();
+  if (ingestionQueue) await ingestionQueue.close();
+  if (pollerQueue) await pollerQueue.close();
+  if (connection) await connection.quit();
 }
