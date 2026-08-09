@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { getPGliteInstance } from "@/lib/pglite-client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,7 +23,7 @@ interface PGliteCatalogViewProps {
   selectedGender?: string;
 }
 
-export function PGliteCatalogView({
+function PGliteCatalogViewContent({
   userId,
   initialProducts,
   selectedBrands = [],
@@ -111,14 +111,14 @@ export function PGliteCatalogView({
                    ON CONFLICT (id) DO UPDATE SET availability = $6, raw_price = $7, currency = $8`,
                   [
                     v.id,
-                    v.productId,
+                    p.id,
                     v.size || "",
                     v.color || "",
                     v.sku || "",
                     v.availability || "OUT_OF_STOCK",
-                    v.rawPrice ? Number(v.rawPrice) : 0,
-                    v.currency || "",
-                    v.normalizedPrice ? Number(v.normalizedPrice) : 0,
+                    v.rawPrice || 0,
+                    v.currency || "USD",
+                    v.normalizedPrice || 0,
                   ]
                 );
               }
@@ -126,83 +126,85 @@ export function PGliteCatalogView({
           }
         }
 
-        let sql = `
-          SELECT p.*, b.name as brand_name, b.domain as brand_domain, b.default_currency as brand_default_currency
-          FROM products p
-          JOIN brands b ON p.brand_id = b.id
-          WHERE 1=1
-        `;
-
+        let whereClause = "WHERE 1=1";
         const queryParams: any[] = [];
+        let paramIdx = 1;
 
         if (selectedBrands.length > 0) {
-          queryParams.push(selectedBrands);
-          sql += ` AND b.name = ANY($${queryParams.length})`;
+          const placeholders = selectedBrands.map(() => `$${paramIdx++}`).join(",");
+          whereClause += ` AND b.name IN (${placeholders})`;
+          queryParams.push(...selectedBrands);
         }
 
         if (selectedCategories.length > 0) {
-          queryParams.push(selectedCategories);
-          sql += ` AND p.category = ANY($${queryParams.length})`;
+          const catOrs = selectedCategories
+            .map(() => `LOWER(p.category) LIKE LOWER($${paramIdx++})`)
+            .join(" OR ");
+          whereClause += ` AND (${catOrs})`;
+          selectedCategories.forEach((c) => queryParams.push(`%${c}%`));
         }
 
-        if (sortBy === "newest_stores") {
-          sql += ` ORDER BY b.created_at DESC, p.created_at DESC`;
-        } else {
-          sql += ` ORDER BY p.created_at DESC`;
+        if (maxPriceFilter !== undefined) {
+          whereClause += ` AND EXISTS (
+            SELECT 1 FROM product_variants v 
+            WHERE v.product_id = p.id AND (v.normalized_price <= $${paramIdx} OR v.raw_price <= $${paramIdx})
+          )`;
+          queryParams.push(maxPriceFilter);
+          paramIdx++;
         }
+
+        let orderByClause = "ORDER BY p.created_at DESC";
+        if (sortBy === "newest_stores") {
+          orderByClause = "ORDER BY b.created_at DESC, p.created_at DESC";
+        }
+
+        const sql = `
+          SELECT 
+            p.id, p.title, p.description, p.category, p.main_image as "mainImage", p.canonical_url as "canonicalUrl", p.created_at as "createdAt",
+            b.name as "brandName", b.domain as "brandDomain", b.default_currency as "brandDefaultCurrency",
+            COALESCE(
+              json_agg(
+                json_build_object(
+                  'id', v.id,
+                  'size', v.size,
+                  'color', v.color,
+                  'availability', v.availability,
+                  'rawPrice', v.raw_price,
+                  'currency', v.currency,
+                  'normalizedPrice', v.normalized_price
+                )
+              ) FILTER (WHERE v.id IS NOT NULL), '[]'
+            ) as variants
+          FROM products p
+          JOIN brands b ON p.brand_id = b.id
+          LEFT JOIN product_variants v ON v.product_id = p.id
+          ${whereClause}
+          GROUP BY p.id, b.name, b.domain, b.default_currency, b.created_at
+          ${orderByClause}
+        `;
 
         const res = await pglite.query(sql, queryParams);
 
-        if (res && res.rows && isMounted) {
-          const resProducts = await Promise.all(
-            res.rows.map(async (row: any) => {
-              const vRes = await pglite.query(
-                `SELECT * FROM product_variants WHERE product_id = $1`,
-                [row.id]
-              );
-              return {
-                id: row.id,
-                title: row.title,
-                mainImage: row.main_image,
-                category: row.category,
-                description: row.description,
-                canonicalUrl: row.canonical_url,
-                brand: {
-                  name: row.brand_name,
-                  domain: row.brand_domain,
-                  defaultCurrency: row.brand_default_currency,
-                },
-                variants: vRes.rows.map((vr: any) => ({
-                  id: vr.id,
-                  size: vr.size,
-                  availability: vr.availability,
-                  rawPrice: vr.raw_price,
-                  currency: vr.currency,
-                  normalizedPrice: vr.normalized_price,
-                })),
-              };
-            })
-          );
-
-          if (resProducts.length > 0) {
-            if (sortBy === "price_asc") {
-              resProducts.sort((a: any, b: any) => {
-                const pA = Number(a.variants?.[0]?.normalizedPrice || a.variants?.[0]?.rawPrice || 0);
-                const pB = Number(b.variants?.[0]?.normalizedPrice || b.variants?.[0]?.rawPrice || 0);
-                return pA - pB;
-              });
-            } else if (sortBy === "price_desc") {
-              resProducts.sort((a: any, b: any) => {
-                const pA = Number(a.variants?.[0]?.normalizedPrice || a.variants?.[0]?.rawPrice || 0);
-                const pB = Number(b.variants?.[0]?.normalizedPrice || b.variants?.[0]?.rawPrice || 0);
-                return pB - pA;
-              });
-            }
-            setProducts(resProducts);
-          }
+        if (isMounted && res.rows && res.rows.length > 0) {
+          const mapped = res.rows.map((row: any) => ({
+            id: row.id,
+            title: row.title,
+            description: row.description,
+            category: row.category,
+            mainImage: row.mainImage,
+            canonicalUrl: row.canonicalUrl,
+            createdAt: row.createdAt,
+            brand: {
+              name: row.brandName,
+              domain: row.brandDomain,
+              defaultCurrency: row.brandDefaultCurrency,
+            },
+            variants: row.variants || [],
+          }));
+          setProducts(mapped);
         }
-      } catch (e) {
-        console.warn("[PGlite WASM Sync/Query Fallback]", e);
+      } catch (err) {
+        console.warn("[PGlite Client View] WASM database query bypassed, using server initial props:", err);
       }
     }
 
@@ -211,61 +213,71 @@ export function PGliteCatalogView({
     return () => {
       isMounted = false;
     };
-  }, [userId, initialProducts, selectedBrands, selectedCategories, maxPriceFilter, sortBy, selectedGender]);
+  }, [
+    initialProducts,
+    JSON.stringify(selectedBrands),
+    JSON.stringify(selectedCategories),
+    maxPriceFilter,
+    sortBy,
+  ]);
 
-  // Filter products by Favorites if isFavoritesOnly filter is active
-  let displayedProducts = isFavoritesOnly
-    ? products.filter((p) => favorites.includes(p.id))
-    : products;
+  let displayProducts = products;
 
-  // Apply strict gender filtering
-  displayedProducts = filterProductsByGender(displayedProducts, selectedGender);
+  if (isFavoritesOnly) {
+    displayProducts = displayProducts.filter((p) => favorites.includes(p.id));
+  }
+
+  displayProducts = filterProductsByGender(displayProducts, selectedGender);
+
+  if (sortBy === "price_asc") {
+    displayProducts.sort((a, b) => {
+      const priceA = Number(a.variants?.[0]?.normalizedPrice || a.variants?.[0]?.rawPrice || 0);
+      const priceB = Number(b.variants?.[0]?.normalizedPrice || b.variants?.[0]?.rawPrice || 0);
+      return priceA - priceB;
+    });
+  } else if (sortBy === "price_desc") {
+    displayProducts.sort((a, b) => {
+      const priceA = Number(a.variants?.[0]?.normalizedPrice || a.variants?.[0]?.rawPrice || 0);
+      const priceB = Number(b.variants?.[0]?.normalizedPrice || b.variants?.[0]?.rawPrice || 0);
+      return priceB - priceA;
+    });
+  }
 
   return (
     <div>
-      {displayedProducts.length === 0 ? (
-        <div className="text-center py-16 bg-muted/20 rounded-2xl border border-dashed space-y-3 px-4">
-          <p className="text-muted-foreground font-medium">
+      {displayProducts.length === 0 ? (
+        <div className="text-center py-16 bg-muted/20 rounded-2xl border border-dashed">
+          <p className="text-muted-foreground font-semibold mb-2">
             {isFavoritesOnly ? t.noFavorites : t.noProducts}
           </p>
-          {!isFavoritesOnly && (
-            <p className="text-xs text-muted-foreground">{t.addBrandPrompt}</p>
-          )}
+          <p className="text-xs text-muted-foreground">
+            {isFavoritesOnly
+              ? "Click the heart icon on any drop to save it to your local favorites."
+              : "Add a store or adjust your filter parameters."}
+          </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-6">
-          {displayedProducts.map((product: any) => {
-            const productUrl =
-              product.canonicalUrl ||
-              (product.brand?.domain ? `https://${product.brand.domain}` : "#");
-
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6">
+          {displayProducts.map((product) => {
             const isFav = favorites.includes(product.id);
-            const firstVariant = product.variants?.[0];
-            const priceText = formatProductPrice(
-              firstVariant?.rawPrice || firstVariant?.normalizedPrice,
-              firstVariant?.currency,
-              product.brand?.defaultCurrency
-            );
-
-            // Determine if all sizes/variants are out of stock (Sold Out)
             const isSoldOut =
-              !product.variants ||
-              product.variants.length === 0 ||
+              product.variants &&
+              product.variants.length > 0 &&
               product.variants.every((v: any) => v.availability === "OUT_OF_STOCK");
+
+            const priceText = formatProductPrice(product);
 
             return (
               <a
                 key={product.id}
-                href={productUrl}
+                href={product.canonicalUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`group block cursor-pointer transition-all ${
-                  isSoldOut ? "opacity-60 grayscale-[0.3] hover:opacity-90 hover:grayscale-0" : ""
-                }`}
+                className={`group block transition-all ${isSoldOut ? "opacity-60 grayscale-[0.3]" : ""}`}
               >
                 <Card className="overflow-hidden border-0 bg-transparent shadow-none">
                   <CardContent className="p-0 relative">
-                    <div className="aspect-[3/4] overflow-hidden rounded-xl bg-muted relative mb-4">
+                    <div className="aspect-[3/4] overflow-hidden rounded-xl bg-muted relative mb-3">
                       <img
                         src={
                           product.mainImage ||
@@ -274,26 +286,30 @@ export function PGliteCatalogView({
                         alt={product.title}
                         className="object-cover w-full h-full transition-transform duration-500 group-hover:scale-105"
                       />
-                      <div className="absolute top-3 left-3 flex flex-wrap gap-1.5 z-10">
-                        <Badge className="bg-background/90 text-foreground backdrop-blur-sm hover:bg-background">
-                          {product.brand?.name || "Brand"}
+                      <div className="absolute top-2.5 left-2.5 flex flex-col gap-1.5 z-10">
+                        <Badge className="bg-background/90 text-foreground backdrop-blur-sm hover:bg-background text-[10px] sm:text-xs py-0.5 px-2 font-bold">
+                          {product.brand?.name}
                         </Badge>
                         {isSoldOut && (
-                          <Badge className="bg-destructive text-destructive-foreground font-bold shadow-sm">
-                            {t.soldOut}
+                          <Badge variant="destructive" className="text-[9px] font-black uppercase py-0.5 px-1.5">
+                            {t.soldOut || "ПРОДАНО"}
                           </Badge>
                         )}
                       </div>
 
-                      {/* Heart Favorite Toggle Button */}
                       <button
                         type="button"
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
                           toggleFavorite(product.id);
+                          setFavorites(getLocalFavorites());
                         }}
-                        className="absolute top-3 right-3 z-10 p-2 rounded-full bg-background/80 backdrop-blur-sm hover:bg-background transition-all shadow-sm hover:scale-110 active:scale-95"
+                        className={`absolute top-2.5 right-2.5 z-10 p-2 rounded-full backdrop-blur-md transition-all ${
+                          isFav
+                            ? "bg-red-500/20 text-red-500 border border-red-500/30"
+                            : "bg-background/60 hover:bg-background/90 text-muted-foreground border border-border/40"
+                        }`}
                         title={isFav ? "Remove from Favorites" : "Add to Favorites"}
                       >
                         <Heart
@@ -305,7 +321,6 @@ export function PGliteCatalogView({
                         />
                       </button>
 
-                      {/* Size availability overlay on hover */}
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center pb-6">
                         <div className="flex flex-wrap gap-1.5 justify-center px-4">
                           {product.variants?.map((v: any) => (
@@ -345,5 +360,13 @@ export function PGliteCatalogView({
         </div>
       )}
     </div>
+  );
+}
+
+export function PGliteCatalogView(props: PGliteCatalogViewProps) {
+  return (
+    <Suspense fallback={<div className="w-full h-96 bg-muted/40 animate-pulse rounded-xl" />}>
+      <PGliteCatalogViewContent {...props} />
+    </Suspense>
   );
 }

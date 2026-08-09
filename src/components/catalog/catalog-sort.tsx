@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowUpDown } from "lucide-react";
 import {
@@ -11,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import { useLanguage } from "@/context/language-context";
 
-export function CatalogSort() {
+function CatalogSortContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -45,5 +46,13 @@ export function CatalogSort() {
         </SelectContent>
       </Select>
     </div>
+  );
+}
+
+export function CatalogSort() {
+  return (
+    <Suspense fallback={<div className="w-[260px] h-9 bg-muted/40 animate-pulse rounded-md" />}>
+      <CatalogSortContent />
+    </Suspense>
   );
 }

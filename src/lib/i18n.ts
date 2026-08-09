@@ -34,9 +34,12 @@ export const TRANSLATIONS = {
     allDrops: "Усі Дропи",
     results: "результатів",
     filters: "Фільтри",
+    clearAll: "Скинути",
     resetFilters: "Скинути",
     category: "Категорія",
+    categories: "Категорії",
     brand: "Бренд",
+    brands: "Бренди",
     maxPrice: "Максимальна ціна",
     noProducts: "Товарів не знайдено у вашому просторі.",
     addBrandPrompt: "Натисніть 'Додати магазин' у шапці сайту, щоб додати перший бренд.",
@@ -119,12 +122,15 @@ export const TRANSLATIONS = {
     allDrops: "All Drops",
     results: "results",
     filters: "Filters",
+    clearAll: "Clear all",
     resetFilters: "Reset",
     category: "Category",
+    categories: "Categories",
     brand: "Brand",
+    brands: "Brands",
     maxPrice: "Max Price",
     noProducts: "No products found in your workspace.",
-    addBrandPrompt: "Click 'Add Brand' in the top header to track a store and populate your catalog.",
+    addBrandPrompt: "Click 'Add Brand' in the header to add your first brand.",
 
     // Gender Filter
     gender: "Gender",
@@ -135,31 +141,31 @@ export const TRANSLATIONS = {
 
     // Favorites / Wishlist
     favorites: "Favorites",
-    favoritesOnly: "Favorites Only",
-    noFavorites: "You have no saved favorite items yet. Click ❤️ on any item to save it!",
+    favoritesOnly: "Favorites only",
+    noFavorites: "You have no saved favorites yet. Click ❤️ on any drop to save it!",
 
     // Brands Management Page
-    trackedBrandsTitle: "Tracked Stores",
-    trackedBrandsDesc: "Manage your connected streetwear brands, refresh their data, or remove them from your local workspace.",
-    noBrandsTitle: "No brands connected yet",
-    noBrandsDesc: "Add a streetwear brand website URL to start tracking its drops and catalog items.",
+    trackedBrandsTitle: "Connected Stores",
+    trackedBrandsDesc: "Manage connected brands, trigger manual syncs, or remove stores from your workspace.",
+    noBrandsTitle: "No stores connected yet",
+    noBrandsDesc: "Add any apparel store URL to begin tracking drops and inventory.",
     viewProducts: "View Products",
-    syncStore: "Refresh Store",
+    syncStore: "Sync Store",
     deleteStore: "Delete Store",
-    confirmDelete: "Confirm Delete?",
-    syncTriggered: "Syncing... New items will populate in catalog shortly!",
+    confirmDelete: "Confirm deletion?",
+    syncTriggered: "Sync triggered! New items will appear in the catalog shortly.",
 
     // Sorting
-    sortBy: "Sort by",
-    newestDrops: "Newest Drops (Recent Items)",
-    newestStores: "Newest Stores (Recently Added Brands)",
+    sortBy: "Sort By",
+    newestDrops: "Newest Drops First",
+    newestStores: "Newest Stores First",
     priceAsc: "Price: Low to High",
     priceDesc: "Price: High to Low",
 
     // Add Brand Modal
-    modalTagline: "Track New Store",
-    modalTitle: "Add Store URL",
-    modalDesc: "Enter any streetwear or clothing brand store URL (Shopify, Wix, Tilda, Custom HTML).",
+    modalTagline: "Track New Apparel Store",
+    modalTitle: "Enter Store URL",
+    modalDesc: "Paste the URL of any clothing brand (Shopify, Wix, Tilda, Custom HTML).",
     modalPlaceholder: "https://riotdivision.tech",
     cancel: "Cancel",
     addStore: "Add Store",
@@ -172,67 +178,41 @@ export const TRANSLATIONS = {
   },
 };
 
-// Category translation mapping dictionary for common clothing terms
-const CATEGORY_TRANSLATIONS: Record<string, { uk: string; en: string }> = {
-  hoodies: { uk: "Худі", en: "Hoodies" },
-  hoodie: { uk: "Худі", en: "Hoodie" },
-  "t-shirts": { uk: "Футболки", en: "T-Shirts" },
-  "t-shirt": { uk: "Футболка", en: "T-Shirt" },
-  tees: { uk: "Футболки", en: "T-Shirts" },
-  tee: { uk: "Футболка", en: "T-Shirt" },
-  jackets: { uk: "Куртки", en: "Jackets" },
-  jacket: { uk: "Куртка", en: "Jacket" },
-  outerwear: { uk: "Верхній одяг", en: "Outerwear" },
-  pants: { uk: "Штани", en: "Pants" },
-  trousers: { uk: "Штани", en: "Trousers" },
-  jeans: { uk: "Джинси", en: "Jeans" },
-  shorts: { uk: "Шорти", en: "Shorts" },
-  sweatshirts: { uk: "Світшоти", en: "Sweatshirts" },
-  sweatshirt: { uk: "Світшот", en: "Sweatshirt" },
-  crewnecks: { uk: "Світшоти", en: "Crewnecks" },
-  sweaters: { uk: "Светри", en: "Sweaters" },
-  accessories: { uk: "Аксесуари", en: "Accessories" },
-  headwear: { uk: "Головні убори", en: "Headwear" },
-  hats: { uk: "Шапки та кепки", en: "Hats & Caps" },
-  caps: { uk: "Кепки", en: "Caps" },
-  footwear: { uk: "Взуття", en: "Footwear" },
-  shoes: { uk: "Взуття", en: "Shoes" },
-  sneakers: { uk: "Кросівки", en: "Sneakers" },
-  bags: { uk: "Сумки та рюкзаки", en: "Bags & Backpacks" },
-  backpacks: { uk: "Рюкзаки", en: "Backpacks" },
+export const CATEGORY_TRANSLATIONS: Record<string, { uk: string; en: string }> = {
+  Hoodies: { uk: "Худі та Світшоти", en: "Hoodies & Sweatshirts" },
+  Sweatshirts: { uk: "Світшоти", en: "Sweatshirts" },
+  "T-Shirts": { uk: "Футболки", en: "T-Shirts" },
+  Tops: { uk: "Топи", en: "Tops" },
+  Jackets: { uk: "Куртки та Одяг", en: "Jackets & Outerwear" },
+  Pants: { uk: "Штани та Джинси", en: "Pants & Jeans" },
+  Shorts: { uk: "Шорти", en: "Shorts" },
+  Headwear: { uk: "Головні убори", en: "Headwear & Caps" },
+  Accessories: { uk: "Аксесуари", en: "Accessories" },
+  Footwear: { uk: "Взуття", en: "Footwear" },
+  Bags: { uk: "Сумки та Рюкзаки", en: "Bags & Backpacks" },
+  Clothing: { uk: "Одяг", en: "Clothing" },
 };
 
-/**
- * Translates generic clothing categories into active language.
- * If it's a proper noun / custom brand-specific name, leaves it unchanged.
- */
-export function translateCategory(category: string, lang: Language): string {
-  if (!category) return "";
-  const key = category.trim().toLowerCase();
-  if (CATEGORY_TRANSLATIONS[key]) {
-    return CATEGORY_TRANSLATIONS[key][lang] || category;
+export function translateCategory(cat: string, lang: Language): string {
+  if (CATEGORY_TRANSLATIONS[cat]) {
+    return CATEGORY_TRANSLATIONS[cat][lang];
   }
-  return category;
+  return cat;
 }
 
 export function detectBrowserLanguage(): Language {
   if (typeof window === "undefined") return "uk";
-
-  // Check saved language cookie / localStorage first
-  const saved = localStorage.getItem("dropagg_lang");
+  const saved = localStorage.getItem("dropagg_lang") as Language;
   if (saved === "uk" || saved === "en") return saved;
-
-  // Check navigator languages for uk, uk-UA
-  const langs = navigator.languages || [navigator.language || ""];
-  const isUkrainian = langs.some(
-    (l) => l.toLowerCase().startsWith("uk") || l.toLowerCase() === "uk-ua"
-  );
-
-  return isUkrainian ? "uk" : "en";
+  const navLang = navigator.language || "";
+  if (navLang.toLowerCase().startsWith("uk") || navLang.toLowerCase().startsWith("ru")) {
+    return "uk";
+  }
+  return "en";
 }
 
 export function setPreferredLanguage(lang: Language) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem("dropagg_lang", lang);
-  document.cookie = `dropagg_lang=${lang}; path=/; max-age=31536000`;
+  if (typeof window !== "undefined") {
+    localStorage.setItem("dropagg_lang", lang);
+  }
 }

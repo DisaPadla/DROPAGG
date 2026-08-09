@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { SyncAllButton } from "./layout/sync-all-button";
@@ -10,7 +10,7 @@ import { useLanguage } from "@/context/language-context";
 import { getLocalFavorites } from "@/lib/favorites";
 import { Store, LayoutGrid, Heart, Menu, X } from "lucide-react";
 
-export default function Navbar() {
+function NavbarContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -188,5 +188,13 @@ export default function Navbar() {
         </div>
       )}
     </nav>
+  );
+}
+
+export default function Navbar() {
+  return (
+    <Suspense fallback={<nav className="sticky top-0 z-50 w-full h-16 border-b bg-background" />}>
+      <NavbarContent />
+    </Suspense>
   );
 }

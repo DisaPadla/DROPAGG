@@ -1,11 +1,11 @@
 "use client";
 
+import { Suspense, useState, useEffect } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Filter, RotateCcw, Heart, SlidersHorizontal, X, User } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
-import { useState, useEffect } from "react";
 import { useLanguage } from "@/context/language-context";
 import { translateCategory } from "@/lib/i18n";
 import { getLocalFavorites } from "@/lib/favorites";
@@ -16,7 +16,7 @@ interface CatalogFiltersProps {
   maxPriceLimit?: number;
 }
 
-export function CatalogFilters({
+function CatalogFiltersContent({
   availableCategories,
   availableBrands,
   maxPriceLimit = 1000,
@@ -66,7 +66,6 @@ export function CatalogFilters({
       }
     });
 
-    // Remove legacy single 'category' param if using multi 'categories'
     if (newParams.categories !== undefined) {
       params.delete("category");
     }
@@ -74,38 +73,46 @@ export function CatalogFilters({
     router.push(`${pathname}?${params.toString()}`);
   };
 
-  const setGender = (genderVal: string) => {
-    updateFilters({ gender: genderVal === "all" ? null : genderVal });
+  const handleGenderChange = (gender: string) => {
+    updateFilters({ gender: gender === "all" ? null : gender });
   };
 
-  const toggleFavoritesOnly = () => {
+  const handleFavoritesToggle = () => {
     updateFilters({ favorites: isFavoritesOnly ? null : "true" });
   };
 
-  const toggleCategory = (cat: string) => {
-    const next = selectedCategories.includes(cat)
-      ? selectedCategories.filter((c) => c !== cat)
-      : [...selectedCategories, cat];
-    updateFilters({ categories: next.length > 0 ? next.join(",") : null });
+  const handleCategoryToggle = (category: string) => {
+    let updated: string[];
+    if (selectedCategories.includes(category)) {
+      updated = selectedCategories.filter((c) => c !== category);
+    } else {
+      updated = [...selectedCategories, category];
+    }
+    updateFilters({
+      categories: updated.length > 0 ? updated.join(",") : null,
+    });
   };
 
-  const toggleBrand = (brand: string) => {
-    const next = selectedBrands.includes(brand)
-      ? selectedBrands.filter((b) => b !== brand)
-      : [...selectedBrands, brand];
-    updateFilters({ brands: next.length > 0 ? next.join(",") : null });
+  const handleBrandToggle = (brand: string) => {
+    let updated: string[];
+    if (selectedBrands.includes(brand)) {
+      updated = selectedBrands.filter((b) => b !== brand);
+    } else {
+      updated = [...selectedBrands, brand];
+    }
+    updateFilters({
+      brands: updated.length > 0 ? updated.join(",") : null,
+    });
   };
 
-  const handlePriceChange = (val: number | readonly number[]) => {
-    const newMax = Array.isArray(val) ? val[0] : (val as number);
-    setPrice(newMax);
+  const handlePriceCommit = (val: number) => {
+    updateFilters({
+      maxPrice: val < maxPriceLimit ? val.toString() : null,
+    });
   };
 
-  const handlePriceCommit = () => {
-    updateFilters({ maxPrice: price < maxPriceLimit ? price.toString() : null });
-  };
-
-  const clearAll = () => {
+  const clearAllFilters = () => {
+    setPrice(maxPriceLimit);
     router.push(pathname);
   };
 
@@ -116,153 +123,179 @@ export function CatalogFilters({
     selectedBrands.length +
     (currentMaxPrice < maxPriceLimit ? 1 : 0);
 
-  const hasActiveFilters = activeCount > 0;
-
   const filterContent = (
     <div className="space-y-6">
-      <div className="flex items-center justify-between border-b pb-4">
-        <div className="flex items-center gap-2">
+      {/* Header & Reset button */}
+      <div className="flex items-center justify-between border-b pb-3">
+        <div className="flex items-center gap-2 font-bold text-lg">
           <Filter className="w-5 h-5" />
-          <h2 className="text-xl font-bold tracking-tight">{t.filters}</h2>
+          <span>{t.filters}</span>
+          {activeCount > 0 && (
+            <span className="px-2 py-0.5 rounded-full bg-primary text-primary-foreground text-xs font-bold">
+              {activeCount}
+            </span>
+          )}
         </div>
-        {hasActiveFilters && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={clearAll}
-            className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1 h-8 px-2"
+        {activeCount > 0 && (
+          <button
+            type="button"
+            onClick={clearAllFilters}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors font-medium"
           >
-            <RotateCcw className="w-3 h-3" />
-            {t.resetFilters}
-          </Button>
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>{t.clearAll}</span>
+          </button>
         )}
       </div>
 
-      {/* Special Favorites Filter Toggle */}
-      <div
-        onClick={toggleFavoritesOnly}
-        className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
-          isFavoritesOnly
-            ? "bg-red-500/10 border-red-500/30 text-red-500 font-bold shadow-sm"
-            : "bg-muted/30 hover:bg-muted text-foreground border-border"
-        }`}
-      >
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <Heart className={`w-4 h-4 ${isFavoritesOnly ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
-          <span>{t.favoritesOnly}</span>
-        </div>
-        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${isFavoritesOnly ? "bg-red-500 text-white" : "bg-muted text-muted-foreground"}`}>
-          {favCount}
-        </span>
-      </div>
-
-      {/* Gender Filter Segmented Selector */}
-      <div className="space-y-3 pt-2">
-        <div className="flex items-center gap-1.5 text-sm font-semibold">
-          <User className="w-4 h-4 text-muted-foreground" />
+      {/* Gender Filter Segmented Control */}
+      <div className="space-y-3">
+        <h3 className="font-semibold text-xs text-muted-foreground tracking-wider uppercase flex items-center gap-1.5">
+          <User className="w-3.5 h-3.5" />
           <span>{t.gender}</span>
-        </div>
-        <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/40 border">
-          {[
-            { id: "all", label: t.allGenders },
-            { id: "men", label: t.menGender },
-            { id: "women", label: t.womenGender },
-            { id: "unisex", label: t.unisexGender },
-          ].map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setGender(item.id)}
-              className={`py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                selectedGender === item.id
-                  ? "bg-background text-foreground font-bold shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+        </h3>
+        <div className="grid grid-cols-3 gap-1.5 p-1 bg-muted/40 rounded-xl border">
+          <button
+            type="button"
+            onClick={() => handleGenderChange("all")}
+            className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
+              selectedGender === "all"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            onClick={() => handleGenderChange("men")}
+            className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
+              selectedGender === "men"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t.menGender}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleGenderChange("women")}
+            className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
+              selectedGender === "women"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t.womenGender}
+          </button>
         </div>
       </div>
 
-      {/* Clothing Type / Category Filter */}
-      <div className="space-y-4 pt-2">
-        <h3 className="font-semibold text-sm">{t.category}</h3>
-        <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+      {/* Favorites Only Quick Toggle */}
+      <div className="space-y-3 pt-2 border-t">
+        <button
+          type="button"
+          onClick={handleFavoritesToggle}
+          className={`w-full flex items-center justify-between p-3 rounded-xl border text-xs font-semibold transition-all ${
+            isFavoritesOnly
+              ? "bg-red-500/10 border-red-500/30 text-red-500 font-bold"
+              : "bg-muted/20 hover:bg-muted/40 border-border text-foreground"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <Heart className={`w-4 h-4 ${isFavoritesOnly ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
+            <span>{t.favoritesOnly}</span>
+          </div>
+          {favCount > 0 && (
+            <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${isFavoritesOnly ? "bg-red-500 text-white" : "bg-muted text-muted-foreground"}`}>
+              {favCount}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Category Section */}
+      <div className="space-y-3 pt-2 border-t">
+        <h3 className="font-semibold text-xs text-muted-foreground tracking-wider uppercase">
+          {t.categories}
+        </h3>
+        <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
           {availableCategories.map((category) => {
             const isChecked = selectedCategories.includes(category);
-            const label = translateCategory(category, lang);
-
             return (
-              <div
+              <label
                 key={category}
-                className="flex items-center space-x-2 cursor-pointer"
-                onClick={() => toggleCategory(category)}
+                className="flex items-center space-x-2.5 text-sm cursor-pointer hover:text-primary transition-colors group"
               >
                 <Checkbox
-                  id={`cat-${category}`}
                   checked={isChecked}
-                  onCheckedChange={() => toggleCategory(category)}
+                  onCheckedChange={() => handleCategoryToggle(category)}
+                  className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                 />
-                <label
-                  htmlFor={`cat-${category}`}
-                  className="text-sm font-medium leading-none cursor-pointer select-none"
-                >
-                  {label}
-                </label>
-              </div>
+                <span className={`font-medium ${isChecked ? "text-foreground font-bold" : "text-muted-foreground"}`}>
+                  {translateCategory(category, lang)}
+                </span>
+              </label>
             );
           })}
         </div>
       </div>
 
-      {/* Brand Filter */}
-      <div className="space-y-4">
-        <h3 className="font-semibold text-sm">{t.brand}</h3>
-        <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+      {/* Brand Section */}
+      <div className="space-y-3 pt-2 border-t">
+        <h3 className="font-semibold text-xs text-muted-foreground tracking-wider uppercase">
+          {t.brands}
+        </h3>
+        <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
           {availableBrands.map((brand) => {
             const isChecked = selectedBrands.includes(brand);
             return (
-              <div
+              <label
                 key={brand}
-                className="flex items-center space-x-2 cursor-pointer"
-                onClick={() => toggleBrand(brand)}
+                className="flex items-center space-x-2.5 text-sm cursor-pointer hover:text-primary transition-colors group"
               >
                 <Checkbox
-                  id={`brand-${brand}`}
                   checked={isChecked}
-                  onCheckedChange={() => toggleBrand(brand)}
+                  onCheckedChange={() => handleBrandToggle(brand)}
+                  className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                 />
-                <label
-                  htmlFor={`brand-${brand}`}
-                  className="text-sm font-medium leading-none cursor-pointer select-none"
-                >
+                <span className={`font-medium ${isChecked ? "text-foreground font-bold" : "text-muted-foreground"}`}>
                   {brand}
-                </label>
-              </div>
+                </span>
+              </label>
             );
           })}
         </div>
       </div>
 
-      {/* Price Filter */}
-      <div className="space-y-4">
-        <div className="flex justify-between items-center">
-          <h3 className="font-semibold text-sm">{t.maxPrice}</h3>
-          <span className="text-xs font-bold font-mono">${price} USD</span>
+      {/* Price Range Slider Section */}
+      <div className="space-y-4 pt-2 border-t">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-xs text-muted-foreground tracking-wider uppercase">
+            {t.maxPrice}
+          </h3>
+          <span className="text-xs font-bold bg-muted px-2 py-0.5 rounded">
+            ${price} USD
+          </span>
         </div>
         <Slider
           value={[price]}
-          onValueChange={handlePriceChange}
-          onValueCommitted={handlePriceCommit}
           min={10}
           max={maxPriceLimit}
           step={10}
-          className="w-full"
+          onValueChange={(vals: any) => {
+            const val = Array.isArray(vals) ? vals[0] : vals;
+            setPrice(val);
+          }}
+          onValueCommitted={(vals: any) => {
+            const val = Array.isArray(vals) ? vals[0] : vals;
+            handlePriceCommit(val);
+          }}
+          className="py-1"
         />
-        <div className="flex justify-between text-xs text-muted-foreground pt-1">
+        <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
           <span>$10</span>
-          <span>${maxPriceLimit}+</span>
+          <span>${maxPriceLimit}</span>
         </div>
       </div>
     </div>
@@ -270,12 +303,12 @@ export function CatalogFilters({
 
   return (
     <>
-      {/* Mobile Filter Trigger Button */}
-      <div className="block md:hidden mb-4">
+      {/* Mobile Filter Toggle Drawer Button */}
+      <div className="md:hidden mb-4">
         <button
           type="button"
           onClick={() => setMobileFiltersOpen(true)}
-          className="w-full h-11 px-4 rounded-xl border bg-background text-sm font-semibold flex items-center justify-between shadow-sm active:scale-[0.99] transition-transform"
+          className="w-full flex items-center justify-between px-4 py-3 bg-muted/40 hover:bg-muted/60 border rounded-xl font-bold text-sm transition-colors"
         >
           <div className="flex items-center gap-2">
             <SlidersHorizontal className="w-4 h-4 text-primary" />
@@ -323,5 +356,13 @@ export function CatalogFilters({
         </div>
       </aside>
     </>
+  );
+}
+
+export function CatalogFilters(props: CatalogFiltersProps) {
+  return (
+    <Suspense fallback={<div className="w-full md:w-64 h-96 bg-muted/40 animate-pulse rounded-xl" />}>
+      <CatalogFiltersContent {...props} />
+    </Suspense>
   );
 }
