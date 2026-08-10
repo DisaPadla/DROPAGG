@@ -1,0 +1,10 @@
+{
+  "short_name": "DROPAGG",
+  "name": "DROPAGG - High Streetwear Drop Aggregator",
+  "icons": [],
+  "start_url": "/",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "display": "standalone",
+  "orientation": "portrait"
+}

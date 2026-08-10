@@ -12,8 +12,8 @@ export async function getPGliteInstance(): Promise<PGlite> {
 
   if (!initPromise) {
     initPromise = (async () => {
-      // Initialize in-memory / IndexedDB PGlite instance
-      const instance = new PGlite();
+      // Initialize persistent IndexedDB PGlite instance for 100% offline capability
+      const instance = new PGlite("idb://dropagg-db");
 
       await instance.exec(`
         CREATE TABLE IF NOT EXISTS brands (
