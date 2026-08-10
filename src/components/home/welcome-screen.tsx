@@ -38,7 +38,8 @@ export function WelcomeScreen() {
         throw new Error(data.error || "Failed to add store");
       }
 
-      router.refresh();
+      // Immediately navigate to main catalog page to display imported products
+      window.location.href = "/";
     } catch (err: any) {
       setError(err.message || "Failed to add store");
     } finally {

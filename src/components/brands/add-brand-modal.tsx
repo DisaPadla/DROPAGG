@@ -44,12 +44,12 @@ export function AddBrandModal() {
 
       setSuccessMsg(data.message || "Brand added successfully!");
       setUrl("");
-      router.refresh();
 
       setTimeout(() => {
         setIsOpen(false);
         setSuccessMsg(null);
-      }, 1500);
+        window.location.href = "/";
+      }, 500);
     } catch (err: any) {
       setError(err.message || "Something went wrong");
     } finally {

@@ -68,6 +68,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ 
       success: true, 
+      brand,
       message: `Successfully added ${name} and imported products to your workspace!` 
     });
 
