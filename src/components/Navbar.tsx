@@ -47,13 +47,14 @@ function NavbarContent() {
         
         {/* Brand Logo & Desktop Navigation Links */}
         <div className="flex items-center gap-6 md:gap-8">
-          <Link href="/" className="font-bold text-xl tracking-tighter">
+          <Link href="/" prefetch={true} className="font-bold text-xl tracking-tighter">
             DROP<span className="text-muted-foreground">AGG.</span>
           </Link>
 
           <div className="hidden md:flex items-center gap-1 text-xs font-semibold">
             <Link
               href="/"
+              prefetch={true}
               className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors ${
                 pathname === "/" && !isFavoritesOnly
                   ? "bg-muted font-bold text-foreground"
@@ -66,6 +67,7 @@ function NavbarContent() {
 
             <Link
               href="/brands"
+              prefetch={true}
               className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors ${
                 pathname === "/brands"
                   ? "bg-muted font-bold text-foreground"

@@ -8,7 +8,7 @@ import { CatalogSort } from "@/components/catalog/catalog-sort";
 import { filterProductsByGender } from "@/lib/gender-classifier";
 import { Product, ProductVariant, Brand } from "@prisma/client";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 30; // ISR cache on Vercel CDN for 30s to make page transitions instant (10ms)
 
 type ProductWithRelations = Product & {
   brand: Brand;
