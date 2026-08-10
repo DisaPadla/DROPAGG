@@ -4,7 +4,18 @@ import { prisma } from "./prisma";
 import { extractMetadata } from "./tier2-extractor";
 import { inferCategory } from "./category-classifier";
 
-export async function syncBrandServerless(brandId: string): Promise<number> {
+export interface ChunkSyncResult {
+  page: number;
+  processedCount: number;
+  hasMore: boolean;
+  nextPage?: number;
+}
+
+export async function syncBrandChunkServerless(
+  brandId: string,
+  page: number = 1,
+  limit: number = 250
+): Promise<ChunkSyncResult> {
   const brand = await prisma.brand.findUnique({ where: { id: brandId } });
   if (!brand) throw new Error("Brand not found");
 
@@ -18,6 +29,13 @@ export async function syncBrandServerless(brandId: string): Promise<number> {
   };
 
   let processedCount = 0;
+  let hasMore = false;
+
+  // Set brand status to SYNCING
+  await prisma.brand.update({
+    where: { id: brand.id },
+    data: { syncStatus: "SYNCING" },
+  });
 
   // Non-Shopify Brands (Tier 2 Web Scraper)
   if (brand.platformType !== "SHOPIFY") {
@@ -108,14 +126,17 @@ export async function syncBrandServerless(brandId: string): Promise<number> {
         console.error(`[Serverless Ingestor] Error scraping ${prodUrl}:`, e);
       }
     }
+    hasMore = false;
   } else {
-    // Shopify Brands
-    const feedUrl = `https://${brand.domain}/products.json?limit=250`;
+    // Shopify Brands - Paginated Fetching (limit per page = 250)
+    const feedUrl = `https://${brand.domain}/products.json?limit=${limit}&page=${page}`;
     const response = await fetch(feedUrl);
     if (!response.ok) throw new Error(`Failed fetching Shopify feed: ${response.statusText}`);
 
     const data = await response.json();
     const products = data.products || [];
+
+    hasMore = products.length === limit;
 
     for (const sp of products) {
       try {
@@ -205,10 +226,21 @@ export async function syncBrandServerless(brandId: string): Promise<number> {
     }
   }
 
+  // Update status to ACTIVE if no more pages left, otherwise keep SYNCING
   await prisma.brand.update({
     where: { id: brand.id },
-    data: { syncStatus: "ACTIVE" },
+    data: { syncStatus: hasMore ? "SYNCING" : "ACTIVE" },
   });
 
-  return processedCount;
+  return {
+    page,
+    processedCount,
+    hasMore,
+    nextPage: hasMore ? page + 1 : undefined,
+  };
+}
+
+export async function syncBrandServerless(brandId: string): Promise<number> {
+  const result = await syncBrandChunkServerless(brandId, 1, 250);
+  return result.processedCount;
 }

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { syncBrandServerless } from "@/lib/serverless-ingestor";
+import { syncBrandChunkServerless } from "@/lib/serverless-ingestor";
 
-export const maxDuration = 60; // Allow up to 60 seconds execution on Vercel Serverless
+export const maxDuration = 60;
 
 export async function POST(
   req: Request,
@@ -19,30 +19,51 @@ export async function POST(
       return NextResponse.json({ error: "Brand not found" }, { status: 404 });
     }
 
-    // If REDIS_URL is present, attempt BullMQ queue, otherwise run Serverless Ingestor directly
     if (process.env.REDIS_URL) {
       try {
         const { ingestionQueue } = await import("@/lib/queue");
-        await ingestionQueue.add(`sync-manual-${id}-${Date.now()}`, {
-          brandId: id,
-          feedUrl: `https://${brand.domain}`,
-          platformType: brand.platformType,
-        });
-        return NextResponse.json({
-          success: true,
-          message: `Triggered Redis sync for ${brand.name}`,
-        });
+        if (ingestionQueue) {
+          await ingestionQueue.add(`sync-manual-${id}-${Date.now()}`, {
+            brandId: id,
+            feedUrl: `https://${brand.domain}`,
+            platformType: brand.platformType,
+          });
+          return NextResponse.json({
+            success: true,
+            message: `Triggered Redis sync for ${brand.name}`,
+          });
+        }
       } catch (redisErr) {
-        console.warn("[Sync API] Redis error, falling back to Serverless Ingestor:", redisErr);
+        console.warn("[Sync API] Redis error, falling back to Serverless Chunked Ingestor:", redisErr);
       }
     }
 
-    // Run direct serverless sync for Vercel Hobby Plan
-    const count = await syncBrandServerless(id);
+    // Run Chunk 1 and auto-chain remaining pages in background
+    const result = await syncBrandChunkServerless(id, 1, 250);
+
+    if (result.hasMore && result.nextPage) {
+      const host = req.headers.get("host") || "localhost:3000";
+      const protocol = req.headers.get("x-forwarded-proto") || (host.includes("localhost") ? "http" : "https");
+      const nextChunkUrl = `${protocol}://${host}/api/brands/${id}/sync-chunk`;
+
+      fetch(nextChunkUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ page: result.nextPage, autoChain: true }),
+      }).catch((err) => {
+        console.warn(`[Sync API] Auto-chain background call error:`, err);
+      });
+    }
 
     return NextResponse.json({
       success: true,
-      message: `Synced ${count} items for ${brand.name}`,
+      brandId: id,
+      page: result.page,
+      processedCount: result.processedCount,
+      hasMore: result.hasMore,
+      message: result.hasMore
+        ? `Synced page 1 (${result.processedCount} items). Background sync started for remaining pages.`
+        : `Synced ${result.processedCount} items for ${brand.name}`,
     });
   } catch (error: any) {
     console.error("[Manual Sync API Error]", error);
