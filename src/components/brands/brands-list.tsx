@@ -64,17 +64,66 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
   const handleSync = async (id: string, name: string) => {
     setSyncingId(id);
     setSyncMessage(null);
+    
+    // Optimistically update status in UI to SYNCING
+    setBrands((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, syncStatus: "SYNCING" } : b))
+    );
+
     try {
-      const res = await fetch(`/api/brands/${id}/sync`, { method: "POST" });
-      if (res.ok) {
-        setSyncMessage(`${name}: ${t.syncTriggered}`);
-        setTimeout(() => setSyncMessage(null), 4000);
-      } else {
-        alert("Failed to start sync");
+      let page = 1;
+      let totalSynced = 0;
+      let hasMore = true;
+
+      // Loop page by page as long as tab stays open
+      while (hasMore) {
+        setSyncMessage(`${name}: ${t.syncingAll || "Синхронізація"} (Page ${page})...`);
+
+        const res = await fetch(`/api/brands/${id}/sync-chunk`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ page, autoChain: true }),
+        });
+
+        if (!res.ok) {
+          throw new Error(`Sync chunk failed with status ${res.status}`);
+        }
+
+        const data = await res.json();
+        totalSynced += data.processedCount || 0;
+        hasMore = Boolean(data.hasMore);
+        page = data.nextPage || page + 1;
+
+        // Update counts in UI after each chunk
+        setBrands((prev) =>
+          prev.map((b) =>
+            b.id === id
+              ? {
+                  ...b,
+                  _count: {
+                    products: Math.max(b._count.products, totalSynced),
+                  },
+                }
+              : b
+          )
+        );
+
+        if (!hasMore) break;
       }
+
+      // Mark brand as ACTIVE in UI
+      setBrands((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, syncStatus: "ACTIVE" } : b))
+      );
+
+      setSyncMessage(`${name}: ${t.allStoresSynced || "Синхронізовано"}! (${totalSynced} items)`);
+      setTimeout(() => setSyncMessage(null), 5000);
     } catch (e) {
-      console.error(e);
-      alert("Failed to trigger sync");
+      console.error("[BrandsList Sync Error]", e);
+      // Fallback: trigger background auto-chaining sync endpoint
+      fetch(`/api/brands/${id}/sync`, { method: "POST" }).catch(() => {});
+      setSyncMessage(`${name}: ${t.syncTriggered}`);
+      setTimeout(() => setSyncMessage(null), 5000);
     } finally {
       setSyncingId(null);
     }
@@ -96,7 +145,7 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
       </div>
 
       {syncMessage && (
-        <div className="p-3.5 rounded-xl bg-primary/10 border border-primary/20 text-xs font-semibold text-primary">
+        <div className="p-3.5 rounded-xl bg-primary/10 border border-primary/20 text-xs font-semibold text-primary animate-in fade-in slide-in-from-top-1">
           {syncMessage}
         </div>
       )}
@@ -133,7 +182,7 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
                   </CardDescription>
                 </div>
                 <Badge variant={brand.syncStatus === "ACTIVE" ? "default" : "secondary"}>
-                  {brand.platformType}
+                  {brand.syncStatus === "SYNCING" ? "SYNCING..." : brand.platformType}
                 </Badge>
               </CardHeader>
 
@@ -154,16 +203,16 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
                     {t.viewProducts} ({brand._count.products})
                   </Link>
 
-                  {/* Manual Sync Button */}
+                  {/* Manual Chunked Sync Button */}
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={syncingId === brand.id}
+                    disabled={syncingId === brand.id || brand.syncStatus === "SYNCING"}
                     onClick={() => handleSync(brand.id, brand.name)}
                     className="text-xs shrink-0 gap-1.5"
                     title={t.syncStore}
                   >
-                    {syncingId === brand.id ? (
+                    {syncingId === brand.id || brand.syncStatus === "SYNCING" ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
                       <RefreshCw className="w-3.5 h-3.5 text-primary" />
