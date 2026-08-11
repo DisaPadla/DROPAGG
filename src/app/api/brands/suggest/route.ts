@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { detectEngine } from "@/lib/engine-detector";
-import { syncBrandServerless } from "@/lib/serverless-ingestor";
+import { syncBrandChunkServerless } from "@/lib/serverless-ingestor";
 
 export const maxDuration = 60;
 
@@ -31,9 +31,9 @@ export async function POST(req: Request) {
     let brand = await prisma.brand.findUnique({ where: { domain } });
 
     if (brand) {
-      // If brand exists, sync it and return 200 with brand data to allow immediate view
+      // If brand exists, attempt sync chunk and return 200 with brand data to allow immediate view
       try {
-        await syncBrandServerless(brand.id);
+        await syncBrandChunkServerless(brand.id, 1, 250);
       } catch (e) {
         console.warn("[Suggest API] Re-sync existing brand error:", e);
       }
@@ -45,7 +45,13 @@ export async function POST(req: Request) {
     }
 
     // Detect the e-commerce engine using root origin
-    const detection = await detectEngine(rootOrigin);
+    let detection: { platform: any; feedUrl?: string } = { platform: "SHOPIFY", feedUrl: rootOrigin };
+    try {
+      detection = await detectEngine(rootOrigin);
+    } catch (detErr) {
+      console.warn("[Suggest API] Engine detection fallback to SHOPIFY:", detErr);
+    }
+
     const feedUrl = detection.feedUrl || rootOrigin;
 
     brand = await prisma.brand.create({
@@ -58,23 +64,26 @@ export async function POST(req: Request) {
       }
     });
 
-    // Run direct serverless sync for Vercel Hobby Plan (or Redis if present)
-    if (process.env.REDIS_URL) {
-      try {
-        const { ingestionQueue } = await import("@/lib/queue");
-        if (ingestionQueue) {
-          await ingestionQueue.add(`ingest-${brand.id}-${Date.now()}`, {
-            brandId: brand.id,
-            feedUrl: feedUrl,
-            platformType: brand.platformType
-          });
-        }
-      } catch (err) {
-        console.warn("[Suggest API] Redis queue unavailable, running Serverless ingestion:", err);
-        await syncBrandServerless(brand.id);
+    // Attempt initial chunk ingestion synchronously so products are saved before response returns
+    try {
+      const chunkResult = await syncBrandChunkServerless(brand.id, 1, 250);
+
+      // Auto-chain next pages in background if more items exist
+      if (chunkResult.hasMore && chunkResult.nextPage) {
+        const host = req.headers.get("host") || "localhost:3000";
+        const protocol = req.headers.get("x-forwarded-proto") || (host.includes("localhost") ? "http" : "https");
+        const nextChunkUrl = `${protocol}://${host}/api/brands/${brand.id}/sync-chunk`;
+
+        fetch(nextChunkUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ page: chunkResult.nextPage, autoChain: true }),
+        }).catch((err) => {
+          console.warn(`[Suggest API] Auto-chain background call error:`, err);
+        });
       }
-    } else {
-      await syncBrandServerless(brand.id);
+    } catch (syncErr) {
+      console.warn("[Suggest API] Initial chunk ingestion error (brand created anyway):", syncErr);
     }
 
     return NextResponse.json({ 
