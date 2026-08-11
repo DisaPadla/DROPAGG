@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Flame, Sparkles, Globe, Zap, PackageCheck, Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/context/language-context";
@@ -13,7 +12,6 @@ const SAMPLE_BRANDS = [
 ];
 
 export function WelcomeScreen() {
-  const router = useRouter();
   const { t } = useLanguage();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState<string | null>(null);
@@ -34,15 +32,15 @@ export function WelcomeScreen() {
 
       const data = await res.json();
 
-      if (!res.ok) {
+      if (!res.ok && !data.brand) {
         throw new Error(data.error || "Failed to add store");
       }
 
-      // Immediately navigate to main catalog page to display imported products
-      window.location.href = "/";
+      // Immediately navigate to main catalog page filtered by the new brand with a cache-buster
+      const brandName = data.brand?.name ? encodeURIComponent(data.brand.name) : "";
+      window.location.href = brandName ? `/?brands=${brandName}&t=${Date.now()}` : `/?t=${Date.now()}`;
     } catch (err: any) {
       setError(err.message || "Failed to add store");
-    } finally {
       setLoading(null);
     }
   };
@@ -77,7 +75,7 @@ export function WelcomeScreen() {
             <div className="relative flex-1">
               <Globe className="absolute left-3.5 top-3.5 h-4 w-4 text-muted-foreground" />
               <input
-                type="url"
+                type="text"
                 placeholder={t.inputPlaceholder}
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
@@ -157,7 +155,7 @@ export function WelcomeScreen() {
         </div>
 
         <div className="p-6 rounded-2xl border bg-card space-y-3 hover:shadow-md transition-shadow">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold">
+          <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center font-bold">
             <PackageCheck className="w-5 h-5" />
           </div>
           <h3 className="font-bold text-lg">{t.feature3Title}</h3>

@@ -14,27 +14,39 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid URL provided" }, { status: 400 });
     }
 
-    // 1. Extract hostname to use as domain and basic name
+    // 1. Extract and trim root origin & hostname (e.g. "https://sndct.com/sadasd/asdadsdas" -> "https://sndct.com" / "sndct.com")
     let parsedUrl;
     try {
-      parsedUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
+      const cleanInput = url.trim().startsWith("http") ? url.trim() : `https://${url.trim()}`;
+      parsedUrl = new URL(cleanInput);
     } catch (e) {
       return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
     }
-    
-    const domain = parsedUrl.hostname.replace(/^www\./, '');
-    const name = domain.split('.')[0].toUpperCase();
+
+    const rootOrigin = parsedUrl.origin; // https://sndct.com
+    const domain = parsedUrl.hostname.replace(/^www\./, ''); // sndct.com
+    const name = domain.split('.')[0].toUpperCase(); // SNDCT
 
     // 2. Check if brand already exists in database
     let brand = await prisma.brand.findUnique({ where: { domain } });
 
     if (brand) {
-      return NextResponse.json({ error: "Brand already added to your workspace!" }, { status: 409 });
+      // If brand exists, sync it and return 200 with brand data to allow immediate view
+      try {
+        await syncBrandServerless(brand.id);
+      } catch (e) {
+        console.warn("[Suggest API] Re-sync existing brand error:", e);
+      }
+      return NextResponse.json({ 
+        success: true, 
+        brand,
+        message: `Store ${name} is already in your workspace!` 
+      });
     }
 
-    // Detect the e-commerce engine
-    const detection = await detectEngine(parsedUrl.origin);
-    const feedUrl = detection.feedUrl || parsedUrl.origin;
+    // Detect the e-commerce engine using root origin
+    const detection = await detectEngine(rootOrigin);
+    const feedUrl = detection.feedUrl || rootOrigin;
 
     brand = await prisma.brand.create({
       data: {
@@ -46,7 +58,7 @@ export async function POST(req: Request) {
       }
     });
 
-    // Enqueue for ingestion: if REDIS_URL is configured use BullMQ, otherwise run Serverless Ingestor directly
+    // Run direct serverless sync for Vercel Hobby Plan (or Redis if present)
     if (process.env.REDIS_URL) {
       try {
         const { ingestionQueue } = await import("@/lib/queue");
@@ -62,7 +74,6 @@ export async function POST(req: Request) {
         await syncBrandServerless(brand.id);
       }
     } else {
-      // Run direct serverless sync for Vercel Hobby Plan
       await syncBrandServerless(brand.id);
     }
 
