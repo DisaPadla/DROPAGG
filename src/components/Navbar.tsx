@@ -51,7 +51,7 @@ function NavbarContent() {
           <Link href="/" prefetch={true} className="flex items-center gap-2.5 font-bold text-xl tracking-tighter group">
             <Logo className="w-7 h-7 sm:w-8 sm:h-8" />
             <span>
-              DROP<span className="text-neon-pink animate-neon-pulse inline-block">AGG.</span>
+              DROP<span className="text-neon-pink animate-text-glow inline-block">AGG.</span>
             </span>
           </Link>
 
