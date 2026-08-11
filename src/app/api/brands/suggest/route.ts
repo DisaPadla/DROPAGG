@@ -31,12 +31,11 @@ export async function POST(req: Request) {
     let brand = await prisma.brand.findUnique({ where: { domain } });
 
     if (brand) {
-      // If brand exists, attempt sync chunk and return 200 with brand data to allow immediate view
-      try {
-        await syncBrandChunkServerless(brand.id, 1, 250);
-      } catch (e) {
-        console.warn("[Suggest API] Re-sync existing brand error:", e);
-      }
+      // Trigger background chunk sync and return immediately
+      syncBrandChunkServerless(brand.id, 1, 250).catch((err) => {
+        console.warn("[Suggest API] Background re-sync error:", err);
+      });
+
       return NextResponse.json({ 
         success: true, 
         brand,
@@ -44,52 +43,46 @@ export async function POST(req: Request) {
       });
     }
 
-    // Detect the e-commerce engine using root origin
-    let detection: { platform: any; feedUrl?: string } = { platform: "SHOPIFY", feedUrl: rootOrigin };
+    // 3. Fast Engine Detection with fallback to SHOPIFY
+    let platformType: any = "SHOPIFY";
     try {
-      detection = await detectEngine(rootOrigin);
+      const detection = await detectEngine(rootOrigin);
+      if (detection?.platform) {
+        platformType = detection.platform;
+      }
     } catch (detErr) {
       console.warn("[Suggest API] Engine detection fallback to SHOPIFY:", detErr);
     }
 
-    const feedUrl = detection.feedUrl || rootOrigin;
-
+    // 4. Create Brand in DB immediately
     brand = await prisma.brand.create({
       data: {
         name,
         domain,
-        platformType: detection.platform,
+        platformType,
         baseCountry: "US",
         defaultCurrency: "USD"
       }
     });
 
-    // Attempt initial chunk ingestion synchronously so products are saved before response returns
-    try {
-      const chunkResult = await syncBrandChunkServerless(brand.id, 1, 250);
+    // 5. Fire non-blocking background chunk ingestion (0.5s fast response!)
+    const host = req.headers.get("host") || "localhost:3000";
+    const protocol = req.headers.get("x-forwarded-proto") || (host.includes("localhost") ? "http" : "https");
+    const syncChunkUrl = `${protocol}://${host}/api/brands/${brand.id}/sync-chunk`;
 
-      // Auto-chain next pages in background if more items exist
-      if (chunkResult.hasMore && chunkResult.nextPage) {
-        const host = req.headers.get("host") || "localhost:3000";
-        const protocol = req.headers.get("x-forwarded-proto") || (host.includes("localhost") ? "http" : "https");
-        const nextChunkUrl = `${protocol}://${host}/api/brands/${brand.id}/sync-chunk`;
+    fetch(syncChunkUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page: 1, autoChain: true }),
+    }).catch((err) => {
+      console.warn("[Suggest API] Background chunk sync trigger error:", err);
+    });
 
-        fetch(nextChunkUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ page: chunkResult.nextPage, autoChain: true }),
-        }).catch((err) => {
-          console.warn(`[Suggest API] Auto-chain background call error:`, err);
-        });
-      }
-    } catch (syncErr) {
-      console.warn("[Suggest API] Initial chunk ingestion error (brand created anyway):", syncErr);
-    }
-
+    // Return instant HTTP 200 response with brand data so UI switches to catalog page in <1 sec
     return NextResponse.json({ 
       success: true, 
       brand,
-      message: `Successfully added ${name} and imported products to your workspace!` 
+      message: `Successfully added ${name}! Importing drops...` 
     });
 
   } catch (error: any) {

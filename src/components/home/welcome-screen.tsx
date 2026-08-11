@@ -15,6 +15,7 @@ export function WelcomeScreen() {
   const { t } = useLanguage();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleAddStore = async (targetUrl: string) => {
@@ -22,6 +23,7 @@ export function WelcomeScreen() {
 
     setLoading(targetUrl);
     setError(null);
+    setStatusMessage(`${t.scanning || "Скануємо та додаємо магазин..."}`);
 
     try {
       const res = await fetch("/api/brands/suggest", {
@@ -36,11 +38,16 @@ export function WelcomeScreen() {
         throw new Error(data.error || "Failed to add store");
       }
 
-      // Immediately navigate to main catalog page filtered by the new brand with a cache-buster
+      setStatusMessage("Магазин додано! Переходимо до каталогу...");
+
+      // Immediately navigate to main catalog page
       const brandName = data.brand?.name ? encodeURIComponent(data.brand.name) : "";
-      window.location.href = brandName ? `/?brands=${brandName}&t=${Date.now()}` : `/?t=${Date.now()}`;
+      const targetHref = brandName ? `/?brands=${brandName}&t=${Date.now()}` : `/?t=${Date.now()}`;
+
+      window.location.href = targetHref;
     } catch (err: any) {
       setError(err.message || "Failed to add store");
+      setStatusMessage(null);
       setLoading(null);
     }
   };
@@ -102,6 +109,13 @@ export function WelcomeScreen() {
               )}
             </Button>
           </form>
+
+          {statusMessage && (
+            <div className="p-3 rounded-xl bg-primary/10 border border-primary/20 text-xs font-semibold text-primary flex items-center justify-center gap-2 animate-in fade-in">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>{statusMessage}</span>
+            </div>
+          )}
 
           {error && (
             <p className="text-xs font-semibold text-destructive bg-destructive/10 p-2.5 rounded-lg border border-destructive/20 text-center">
