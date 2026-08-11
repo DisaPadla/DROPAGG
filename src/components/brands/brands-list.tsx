@@ -65,7 +65,6 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
     setSyncingId(id);
     setSyncMessage(null);
     
-    // Optimistically update status in UI to SYNCING
     setBrands((prev) =>
       prev.map((b) => (b.id === id ? { ...b, syncStatus: "SYNCING" } : b))
     );
@@ -75,7 +74,6 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
       let totalSynced = 0;
       let hasMore = true;
 
-      // Loop page by page as long as tab stays open
       while (hasMore) {
         setSyncMessage(`${name}: ${t.syncingAll || "Синхронізація"} (Page ${page})...`);
 
@@ -94,7 +92,6 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
         hasMore = Boolean(data.hasMore);
         page = data.nextPage || page + 1;
 
-        // Update counts in UI after each chunk
         setBrands((prev) =>
           prev.map((b) =>
             b.id === id
@@ -111,7 +108,6 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
         if (!hasMore) break;
       }
 
-      // Mark brand as ACTIVE in UI
       setBrands((prev) =>
         prev.map((b) => (b.id === id ? { ...b, syncStatus: "ACTIVE" } : b))
       );
@@ -120,12 +116,14 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
       setTimeout(() => setSyncMessage(null), 5000);
     } catch (e) {
       console.error("[BrandsList Sync Error]", e);
-      // Fallback: trigger background auto-chaining sync endpoint
       fetch(`/api/brands/${id}/sync`, { method: "POST" }).catch(() => {});
       setSyncMessage(`${name}: ${t.syncTriggered}`);
       setTimeout(() => setSyncMessage(null), 5000);
     } finally {
       setSyncingId(null);
+      setBrands((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, syncStatus: "ACTIVE" } : b))
+      );
     }
   };
 
@@ -181,8 +179,8 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
                     </a>
                   </CardDescription>
                 </div>
-                <Badge variant={brand.syncStatus === "ACTIVE" ? "default" : "secondary"}>
-                  {brand.syncStatus === "SYNCING" ? "SYNCING..." : brand.platformType}
+                <Badge variant={syncingId === brand.id ? "secondary" : "default"}>
+                  {syncingId === brand.id ? "SYNCING..." : brand.platformType}
                 </Badge>
               </CardHeader>
 
@@ -207,12 +205,12 @@ export function BrandsList({ initialBrands }: BrandsListProps) {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={syncingId === brand.id || brand.syncStatus === "SYNCING"}
+                    disabled={syncingId === brand.id}
                     onClick={() => handleSync(brand.id, brand.name)}
                     className="text-xs shrink-0 gap-1.5"
                     title={t.syncStore}
                   >
-                    {syncingId === brand.id || brand.syncStatus === "SYNCING" ? (
+                    {syncingId === brand.id ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
                       <RefreshCw className="w-3.5 h-3.5 text-primary" />

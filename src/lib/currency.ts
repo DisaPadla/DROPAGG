@@ -13,23 +13,33 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 };
 
 export function formatProductPrice(
-  rawPrice?: number | null,
+  rawPriceOrProduct?: number | any | null,
   currency?: string | null,
   brandCurrency?: string | null
 ): string {
-  const priceVal = typeof rawPrice === "number" ? rawPrice : Number(rawPrice || 0);
+  let priceVal: number = 0;
+  let curr: string = currency || "";
+  let bCurr: string = brandCurrency || "";
 
-  if (!priceVal && priceVal !== 0) {
-    return "Price 0";
+  if (rawPriceOrProduct && typeof rawPriceOrProduct === "object") {
+    const p = rawPriceOrProduct;
+    const variant = p.variants?.[0];
+    priceVal = Number(variant?.rawPrice ?? variant?.normalizedPrice ?? 0);
+    curr = variant?.currency || p.brand?.defaultCurrency || "";
+    bCurr = p.brand?.defaultCurrency || "";
+  } else {
+    priceVal = typeof rawPriceOrProduct === "number" ? rawPriceOrProduct : Number(rawPriceOrProduct || 0);
   }
 
-  const code = (currency || brandCurrency || "").trim().toUpperCase();
+  if (!priceVal && priceVal !== 0) {
+    return "";
+  }
+
+  const code = (curr || bCurr || "USD").trim().toUpperCase();
 
   if (code && CURRENCY_SYMBOLS[code]) {
     const symbol = CURRENCY_SYMBOLS[code];
-    // Symbol positioning based on standard currency conventions
-    if (code === "UAH") return `${priceVal} ${symbol}`;
-    if (code === "PLN") return `${priceVal} ${symbol}`;
+    if (code === "UAH" || code === "PLN") return `${priceVal} ${symbol}`;
     return `${symbol}${priceVal}`;
   }
 
@@ -37,5 +47,5 @@ export function formatProductPrice(
     return `${priceVal} ${code}`;
   }
 
-  return `Price ${priceVal}`;
+  return `$${priceVal}`;
 }
