@@ -12,6 +12,11 @@ export const metadata: Metadata = {
   title: "DropAgg | Агрегатор стрітвір та брендового одягу",
   description: "Відстежуйте дропи, нові колекції та наявність розмірів у магазинах одягу.",
   manifest: "/manifest.json",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+    apple: "/logo.svg",
+  },
 };
 
 export default function RootLayout({
@@ -22,6 +27,8 @@ export default function RootLayout({
   return (
     <html lang="uk">
       <head>
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        <link rel="apple-touch-icon" href="/logo.svg" />
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#09090b" />
       </head>
