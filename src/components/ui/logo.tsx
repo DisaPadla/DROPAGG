@@ -9,7 +9,7 @@ export function Logo({ className = "w-7 h-7 sm:w-8 sm:h-8", ...props }: LogoProp
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 512 512"
-      className={`shrink-0 transition-transform duration-300 group-hover:scale-105 ${className}`}
+      className={`shrink-0 animate-neon-pulse transition-transform duration-300 group-hover:scale-110 ${className}`}
       {...props}
     >
       <defs>

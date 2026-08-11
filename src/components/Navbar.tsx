@@ -49,8 +49,10 @@ function NavbarContent() {
         {/* Brand Logo & Desktop Navigation Links */}
         <div className="flex items-center gap-6 md:gap-8">
           <Link href="/" prefetch={true} className="flex items-center gap-2.5 font-bold text-xl tracking-tighter group">
-            <Logo className="w-7 h-7 sm:w-8 sm:h-8 drop-shadow-[0_0_8px_rgba(255,0,160,0.4)]" />
-            <span>DROP<span className="text-muted-foreground">AGG.</span></span>
+            <Logo className="w-7 h-7 sm:w-8 sm:h-8" />
+            <span>
+              DROP<span className="text-neon-pink animate-neon-pulse inline-block">AGG.</span>
+            </span>
           </Link>
 
           <div className="hidden md:flex items-center gap-1 text-xs font-semibold">
