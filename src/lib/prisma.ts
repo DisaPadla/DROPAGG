@@ -7,7 +7,17 @@ import { meiliClient, PRODUCTS_INDEX } from "./meilisearch";
 const globalForPrisma = global as unknown as { prisma: any; prismaBase: PrismaClient };
 
 export const prisma = globalForPrisma.prisma || (() => {
-  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  const connectionString = process.env.DATABASE_URL;
+  const isLocal =
+    !connectionString ||
+    connectionString.includes("localhost") ||
+    connectionString.includes("127.0.0.1");
+
+  const pool = new pg.Pool({
+    connectionString,
+    ssl: isLocal ? false : { rejectUnauthorized: false },
+    connectionTimeoutMillis: 10000,
+  });
   const adapter = new PrismaPg(pool);
   const prismaBase = new PrismaClient({ adapter });
   globalForPrisma.prismaBase = prismaBase; // Cache it for upsert
