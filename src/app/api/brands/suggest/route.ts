@@ -31,20 +31,25 @@ async function linkBrandToCurrentUser(brandId: string) {
 
 function formatErrorMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
+  const lowerMsg = msg.toLowerCase();
   if (!process.env.DATABASE_URL) {
     return "Database connection string is missing. Please set DATABASE_URL in Vercel settings or .env file.";
   }
   if (
     msg.includes("ECONNREFUSED") ||
     msg.includes("ETIMEDOUT") ||
-    msg.includes("Can't reach database server") ||
-    msg.includes("Tenant or user not found")
+    msg.includes("ENOTFOUND") ||
+    msg.includes("XX000") ||
+    lowerMsg.includes("can't reach database server") ||
+    lowerMsg.includes("tenant or user not found") ||
+    (lowerMsg.includes("tenant/user") && lowerMsg.includes("not found"))
   ) {
     if (
       process.env.DATABASE_URL.includes("supabase.co") ||
-      process.env.DATABASE_URL.includes("supabase.com")
+      process.env.DATABASE_URL.includes("supabase.com") ||
+      lowerMsg.includes("tenant/user")
     ) {
-      return "Cannot connect to Supabase database. Your Supabase project is likely PAUSED due to inactivity. Open supabase.com and click 'Restore project'.";
+      return "Cannot connect to Supabase database (tenant/user not found). Your Supabase project is PAUSED or deleted. Open supabase.com/dashboard and click 'Restore project', or update DATABASE_URL in Vercel.";
     }
     if (msg.includes("51214")) {
       return "Local PostgreSQL database on port 51214 is not running. Please start your database or update DATABASE_URL in .env.";
