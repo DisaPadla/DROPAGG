@@ -65,7 +65,7 @@ export async function POST(
         ? `Synced page 1 (${result.processedCount} items). Background sync started for remaining pages.`
         : `Synced ${result.processedCount} items for ${brand.name}`,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[Manual Sync API Error]", error);
     return NextResponse.json({ error: "Failed to trigger sync" }, { status: 500 });
   }

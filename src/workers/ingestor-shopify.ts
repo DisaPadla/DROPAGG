@@ -6,6 +6,9 @@ import { ingestionQueueName } from "../lib/queue";
 import { prisma } from "../lib/prisma";
 import { extractMetadata } from "../lib/tier2-extractor";
 import { inferCategory } from "../lib/category-classifier";
+import { upsertVariantWithDropEvent } from "../lib/drop-events";
+import { normalizePriceToUsd } from "../lib/currency";
+import { detectStoreLocale } from "../lib/engine-detector";
 
 const connection = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379", {
   maxRetriesPerRequest: null,
@@ -16,17 +19,37 @@ export const shopifyIngestorWorker = new Worker(
   async (job: Job) => {
     const { brandId, feedUrl, platformType } = job.data;
 
-    const brand = await prisma.brand.findUnique({ where: { id: brandId } });
+    let brand = await prisma.brand.findUnique({ where: { id: brandId } });
     if (!brand) throw new Error("Brand not found");
+
+    if (brand.defaultCurrency === "USD" && brand.baseCountry === "US") {
+      try {
+        const locale = await detectStoreLocale(`https://${brand.domain}`);
+        if (
+          (locale.currency && locale.currency !== "USD") ||
+          (locale.country && locale.country !== "US")
+        ) {
+          brand = await prisma.brand.update({
+            where: { id: brand.id },
+            data: {
+              defaultCurrency: locale.currency || brand.defaultCurrency,
+              baseCountry: locale.country || brand.baseCountry,
+            },
+          });
+        }
+      } catch {
+        // Ignore locale detection error in worker
+      }
+    }
 
     // We need exchange rates to normalize prices
     const rates = await prisma.exchangeRate.findMany();
-    const rateMap = new Map(rates.map((r: { targetCurrency: string; rate: any }) => [r.targetCurrency, Number(r.rate)]));
+    const rateMap = new Map<string, number>(
+      rates.map((r: { targetCurrency: string; rate: unknown }) => [r.targetCurrency, Number(r.rate)])
+    );
 
     const getNormalizedPrice = (price: number, currency: string): number => {
-      if (currency === "USD") return price;
-      const rate = rateMap.get(currency);
-      return rate ? price / Number(rate) : price;
+      return normalizePriceToUsd(price, currency, rateMap);
     };
 
     // Tier 2 Web Scraper for Non-Shopify Brands (Wix, Tilda, Custom)
@@ -81,33 +104,23 @@ export const shopifyIngestorWorker = new Worker(
           });
 
           const rawPrice = meta.price;
+          const compareAtPrice =
+            meta.compareAtPrice && Number.isFinite(meta.compareAtPrice) && meta.compareAtPrice > rawPrice
+              ? meta.compareAtPrice
+              : null;
           const currency = meta.currency || brand.defaultCurrency;
           const normalizedPrice = getNormalizedPrice(rawPrice, currency);
 
-          await prisma.productVariant.upsert({
-            where: {
-              productId_size_color: {
-                productId: product.id,
-                size: "OS",
-                color: "DEFAULT"
-              }
-            },
-            update: {
-              availability: "IN_STOCK",
-              rawPrice,
-              currency,
-              normalizedPrice
-            },
-            create: {
-              productId: product.id,
-              externalId: meta.url,
-              size: "OS",
-              color: "DEFAULT",
-              availability: "IN_STOCK",
-              rawPrice,
-              currency,
-              normalizedPrice
-            }
+          await upsertVariantWithDropEvent(prisma, {
+            productId: product.id,
+            externalId: meta.url,
+            size: "OS",
+            color: "DEFAULT",
+            availability: meta.availability === "OUT_OF_STOCK" ? "OUT_OF_STOCK" : "IN_STOCK",
+            rawPrice,
+            compareAtPrice,
+            currency,
+            normalizedPrice,
           });
           count++;
         } catch (e) {
@@ -183,36 +196,26 @@ export const shopifyIngestorWorker = new Worker(
             color = color || "DEFAULT";
 
             const rawPrice = parseFloat(sv.price);
+            const parsedCompareAt = sv.compare_at_price ? parseFloat(sv.compare_at_price) : null;
+            const compareAtPrice =
+              parsedCompareAt !== null && Number.isFinite(parsedCompareAt) && parsedCompareAt > rawPrice
+                ? parsedCompareAt
+                : null;
             const availability: AvailabilityStatus = sv.available ? "IN_STOCK" : "OUT_OF_STOCK";
             
             const normalizedPrice = getNormalizedPrice(rawPrice, brand.defaultCurrency);
 
-            await prisma.productVariant.upsert({
-              where: {
-                productId_size_color: {
-                  productId: product.id,
-                  size,
-                  color,
-                }
-              },
-              update: {
-                availability,
-                rawPrice,
-                currency: brand.defaultCurrency,
-                normalizedPrice,
-                sku,
-              },
-              create: {
-                productId: product.id,
-                externalId: sv.id.toString(),
-                size,
-                color,
-                sku,
-                availability,
-                rawPrice,
-                currency: brand.defaultCurrency,
-                normalizedPrice,
-              }
+            await upsertVariantWithDropEvent(prisma, {
+              productId: product.id,
+              externalId: sv.id.toString(),
+              size,
+              color,
+              sku,
+              availability,
+              rawPrice,
+              compareAtPrice,
+              currency: brand.defaultCurrency,
+              normalizedPrice,
             });
           }
         } catch (err) {

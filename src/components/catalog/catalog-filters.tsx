@@ -2,29 +2,33 @@
 
 import { Suspense, useState, useEffect } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Filter, RotateCcw, Heart, SlidersHorizontal, X, User } from "lucide-react";
+import { Filter, RotateCcw, Heart, SlidersHorizontal, X, User, PackageCheck, Ruler } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/context/language-context";
 import { translateCategory } from "@/lib/i18n";
 import { getLocalFavorites } from "@/lib/favorites";
+import { STANDARD_SIZES } from "@/lib/size-filter";
+import { formatProductPrice } from "@/lib/currency";
 
 interface CatalogFiltersProps {
   availableCategories: string[];
   availableBrands: string[];
+  availableSizes?: string[];
   maxPriceLimit?: number;
 }
 
 function CatalogFiltersContent({
   availableCategories,
   availableBrands,
+  availableSizes = [...STANDARD_SIZES],
   maxPriceLimit = 1000,
 }: CatalogFiltersProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { lang, t } = useLanguage();
+  const { lang, t, currency } = useLanguage();
   const [favCount, setFavCount] = useState(0);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
@@ -41,19 +45,28 @@ function CatalogFiltersContent({
   // Parse current state from URL searchParams
   const selectedGender = searchParams.get("gender") || "all";
   const isFavoritesOnly = searchParams.get("favorites") === "true";
-  const selectedCategories = searchParams.get("categories")
-    ? searchParams.get("categories")!.split(",")
-    : searchParams.get("category")
-    ? [searchParams.get("category")!]
+  const isInStockOnly = searchParams.get("inStock") === "true";
+  const selectedSizes = searchParams.get("sizes")
+    ? searchParams.get("sizes")!.split(",").filter(Boolean)
     : [];
-  const selectedBrands = searchParams.get("brands") ? searchParams.get("brands")!.split(",") : [];
+  const selectedCategories = searchParams.get("categories")
+    ? searchParams.get("categories")!.split(",").filter(Boolean)
+    : searchParams.get("category")
+    ? [searchParams.get("category")!].filter(Boolean)
+    : [];
+  const selectedBrands = searchParams.get("brands")
+    ? searchParams.get("brands")!.split(",").filter(Boolean)
+    : [];
+  const displayBrands = Array.from(new Set([...availableBrands, ...selectedBrands]));
   const currentMaxPrice = searchParams.get("maxPrice") ? Number(searchParams.get("maxPrice")) : maxPriceLimit;
 
   const [price, setPrice] = useState<number>(currentMaxPrice);
+  const [prevMaxPrice, setPrevMaxPrice] = useState<number>(currentMaxPrice);
 
-  useEffect(() => {
+  if (currentMaxPrice !== prevMaxPrice) {
+    setPrevMaxPrice(currentMaxPrice);
     setPrice(currentMaxPrice);
-  }, [currentMaxPrice]);
+  }
 
   const updateFilters = (newParams: Record<string, string | null>) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -70,7 +83,8 @@ function CatalogFiltersContent({
       params.delete("category");
     }
 
-    router.push(`${pathname}?${params.toString()}`);
+    const query = params.toString();
+    router.push(query ? `${pathname}?${query}` : pathname);
   };
 
   const handleGenderChange = (gender: string) => {
@@ -79,6 +93,22 @@ function CatalogFiltersContent({
 
   const handleFavoritesToggle = () => {
     updateFilters({ favorites: isFavoritesOnly ? null : "true" });
+  };
+
+  const handleInStockToggle = () => {
+    updateFilters({ inStock: isInStockOnly ? null : "true" });
+  };
+
+  const handleSizeToggle = (size: string) => {
+    let updated: string[];
+    if (selectedSizes.includes(size)) {
+      updated = selectedSizes.filter((s) => s !== size);
+    } else {
+      updated = [...selectedSizes, size];
+    }
+    updateFilters({
+      sizes: updated.length > 0 ? updated.join(",") : null,
+    });
   };
 
   const handleCategoryToggle = (category: string) => {
@@ -113,12 +143,23 @@ function CatalogFiltersContent({
 
   const clearAllFilters = () => {
     setPrice(maxPriceLimit);
-    router.push(pathname);
+    updateFilters({
+      gender: null,
+      favorites: null,
+      inStock: null,
+      sizes: null,
+      categories: null,
+      category: null,
+      brands: null,
+      maxPrice: null,
+    });
   };
 
   const activeCount =
     (selectedGender !== "all" ? 1 : 0) +
     (isFavoritesOnly ? 1 : 0) +
+    (isInStockOnly ? 1 : 0) +
+    selectedSizes.length +
     selectedCategories.length +
     selectedBrands.length +
     (currentMaxPrice < maxPriceLimit ? 1 : 0);
@@ -191,8 +232,39 @@ function CatalogFiltersContent({
         </div>
       </div>
 
-      {/* Favorites Only Quick Toggle */}
-      <div className="space-y-3 pt-2 border-t">
+      {/* Favorites Only & In Stock Quick Toggles */}
+      <div className="space-y-2.5 pt-2 border-t">
+        <button
+          type="button"
+          onClick={handleInStockToggle}
+          className={`w-full flex items-center justify-between p-3 rounded-xl border text-xs font-semibold transition-all ${
+            isInStockOnly
+              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500 font-bold"
+              : "bg-muted/20 hover:bg-muted/40 border-border text-foreground"
+          }`}
+        >
+          <div className="flex items-center gap-2 text-left">
+            <PackageCheck
+              className={`w-4 h-4 shrink-0 ${
+                isInStockOnly ? "text-emerald-500" : "text-muted-foreground"
+              }`}
+            />
+            <div className="flex flex-col">
+              <span>{t.inStockOnly || "Тільки в наявності"}</span>
+              <span className="text-[10px] font-normal text-muted-foreground">
+                {t.hideSoldOut || "Приховати Sold Out"}
+              </span>
+            </div>
+          </div>
+          <span
+            className={`w-8 h-4.5 rounded-full transition-colors flex items-center px-0.5 shrink-0 ${
+              isInStockOnly ? "bg-emerald-500 justify-end" : "bg-muted justify-start"
+            }`}
+          >
+            <span className="w-3.5 h-3.5 rounded-full bg-white shadow-sm" />
+          </span>
+        </button>
+
         <button
           type="button"
           onClick={handleFavoritesToggle}
@@ -212,6 +284,44 @@ function CatalogFiltersContent({
             </span>
           )}
         </button>
+      </div>
+
+      {/* Size Filter Section (In-Stock Variants) */}
+      <div className="space-y-3 pt-2 border-t">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-xs text-muted-foreground tracking-wider uppercase flex items-center gap-1.5">
+            <Ruler className="w-3.5 h-3.5" />
+            <span>{t.sizes || "Розміри (в наявності)"}</span>
+          </h3>
+          {selectedSizes.length > 0 && (
+            <button
+              type="button"
+              onClick={() => updateFilters({ sizes: null })}
+              className="text-[10px] text-muted-foreground hover:text-foreground font-medium"
+            >
+              {t.resetFilters}
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {availableSizes.map((size) => {
+            const isSelected = selectedSizes.includes(size);
+            return (
+              <button
+                key={size}
+                type="button"
+                onClick={() => handleSizeToggle(size)}
+                className={`py-2 px-1.5 rounded-lg border text-xs font-bold transition-all ${
+                  isSelected
+                    ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                    : "bg-muted/20 hover:bg-muted/50 border-border text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {size}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Category Section */}
@@ -247,7 +357,7 @@ function CatalogFiltersContent({
           {t.brands}
         </h3>
         <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
-          {availableBrands.map((brand) => {
+          {displayBrands.map((brand) => {
             const isChecked = selectedBrands.includes(brand);
             return (
               <label
@@ -275,7 +385,7 @@ function CatalogFiltersContent({
             {t.maxPrice}
           </h3>
           <span className="text-xs font-bold bg-muted px-2 py-0.5 rounded">
-            ${price} USD
+            {formatProductPrice(price, "USD", "USD", currency)} {currency}
           </span>
         </div>
         <Slider
@@ -283,19 +393,19 @@ function CatalogFiltersContent({
           min={10}
           max={maxPriceLimit}
           step={10}
-          onValueChange={(vals: any) => {
-            const val = Array.isArray(vals) ? vals[0] : vals;
+          onValueChange={(vals: number | readonly number[]) => {
+            const val = Array.isArray(vals) ? vals[0] : (vals as number);
             setPrice(val);
           }}
-          onValueCommitted={(vals: any) => {
-            const val = Array.isArray(vals) ? vals[0] : vals;
+          onValueCommitted={(vals: number | readonly number[]) => {
+            const val = Array.isArray(vals) ? vals[0] : (vals as number);
             handlePriceCommit(val);
           }}
           className="py-1"
         />
         <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
-          <span>$10</span>
-          <span>${maxPriceLimit}</span>
+          <span>{formatProductPrice(10, "USD", "USD", currency)}</span>
+          <span>{formatProductPrice(maxPriceLimit, "USD", "USD", currency)}</span>
         </div>
       </div>
     </div>

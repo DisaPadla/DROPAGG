@@ -16,7 +16,7 @@ export async function POST(
       const body = await req.json();
       if (body.page) page = Number(body.page);
       if (body.autoChain !== undefined) autoChain = Boolean(body.autoChain);
-    } catch (e) {
+    } catch {
       const url = new URL(req.url);
       if (url.searchParams.get("page")) page = Number(url.searchParams.get("page"));
     }
@@ -48,8 +48,9 @@ export async function POST(
       nextPage: result.nextPage,
       message: `Processed page ${result.page} (${result.processedCount} items)`,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[Sync Chunk API Error]", error);
-    return NextResponse.json({ error: error.message || "Chunk sync failed" }, { status: 500 });
+    const errMsg = error instanceof Error ? error.message : "Chunk sync failed";
+    return NextResponse.json({ error: errMsg }, { status: 500 });
   }
 }

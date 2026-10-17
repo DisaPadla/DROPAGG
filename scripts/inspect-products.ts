@@ -13,7 +13,7 @@ async function main() {
   console.log(`Products passing MEN filter: ${menFiltered.length}`);
   console.log("--- Listing titles of products passing MEN filter ---");
 
-  menFiltered.forEach((p: any, idx: number) => {
+  menFiltered.forEach((p, idx: number) => {
     console.log(`${idx + 1}. [${p.brand?.name}] [Cat: ${p.category}] ${p.title}`);
   });
 }

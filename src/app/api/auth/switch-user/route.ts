@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     cookieStore.set("user_id", user.id, { path: "/", maxAge: 60 * 60 * 24 * 30 });
 
     return NextResponse.json({ success: true, user });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[Switch User API Error]", error);
     return NextResponse.json({ error: "Failed to switch user" }, { status: 500 });
   }

@@ -15,13 +15,13 @@ const getRedisConnection = () => {
 const connection = getRedisConnection();
 
 export const ingestionQueueName = "ingestion-queue";
-export const ingestionQueue = connection ? new Queue(ingestionQueueName, { connection }) : null as any;
+export const ingestionQueue = connection ? new Queue(ingestionQueueName, { connection }) : (null as unknown as Queue);
 
 export const pollerQueueName = "poller-queue";
-export const pollerQueue = connection ? new Queue(pollerQueueName, { connection }) : null as any;
+export const pollerQueue = connection ? new Queue(pollerQueueName, { connection }) : (null as unknown as Queue);
 
-export const ingestionQueueEvents = connection ? new QueueEvents(ingestionQueueName, { connection }) : null as any;
-export const pollerQueueEvents = connection ? new QueueEvents(pollerQueueName, { connection }) : null as any;
+export const ingestionQueueEvents = connection ? new QueueEvents(ingestionQueueName, { connection }) : (null as unknown as QueueEvents);
+export const pollerQueueEvents = connection ? new QueueEvents(pollerQueueName, { connection }) : (null as unknown as QueueEvents);
 
 export async function closeQueues() {
   if (ingestionQueue) await ingestionQueue.close();

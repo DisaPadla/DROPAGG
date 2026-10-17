@@ -5,44 +5,134 @@ import { useSearchParams } from "next/navigation";
 import { getPGliteInstance } from "@/lib/pglite-client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ExternalLink, Heart, Loader2 } from "lucide-react";
+import { ExternalLink, Heart, Loader2, Sparkles, RotateCcw } from "lucide-react";
 import { useLanguage } from "@/context/language-context";
 import { getLocalFavorites, toggleFavorite } from "@/lib/favorites";
-import { formatProductPrice } from "@/lib/currency";
+import {
+  formatProductPrice,
+  getProductPriceInUsd,
+  resolveVariantCurrency,
+  getVariantPriceInUsd,
+} from "@/lib/currency";
+import {
+  appendUtmParams,
+  getProductDiscountInfo,
+  formatCompareAtPrice,
+  trackOutboundClick,
+} from "@/lib/utm";
 import { filterProductsByGender } from "@/lib/gender-classifier";
+import {
+  filterProductsBySizeAndStock,
+  isVariantSizeSelected,
+  getEffectiveProductPrice,
+} from "@/lib/size-filter";
+import { getProductDropBadges } from "@/lib/drop-events";
+
+import { LocalCatalogProduct, LocalCatalogVariant } from "@/lib/local-first-storage";
 
 interface PGliteCatalogViewProps {
   userId?: string;
-  initialProducts: any[];
+  initialProducts: LocalCatalogProduct[];
   availableCategories: string[];
   availableBrands: string[];
   selectedBrands?: string[];
   selectedCategories?: string[];
+  selectedSizes?: string[];
+  inStockOnly?: boolean;
   maxPriceFilter?: number;
   sortBy?: string;
   selectedGender?: string;
 }
 
+interface PGliteQueryClient {
+  query: <R = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[]
+  ) => Promise<{ rows?: R[] }>;
+}
+
+interface PGliteProductRow {
+  id: string;
+  title: string;
+  description: string | null;
+  category: string;
+  mainImage: string | null;
+  canonicalUrl: string;
+  createdAt: string | Date | null;
+  brandId: string;
+  brandName: string;
+  brandDomain: string;
+  brandDefaultCurrency: string;
+  variants: LocalCatalogVariant[];
+}
+
 const ITEMS_PER_CHUNK = 18;
 
 function PGliteCatalogViewContent({
-  userId,
   initialProducts,
+  availableBrands = [],
   selectedBrands = [],
   selectedCategories = [],
+  selectedSizes: propSizes,
+  inStockOnly: propInStockOnly,
   maxPriceFilter,
   sortBy = "newest_drops",
   selectedGender: propGender,
 }: PGliteCatalogViewProps) {
-  const { t } = useLanguage();
+  const { t, currency } = useLanguage();
+  void currency;
   const searchParams = useSearchParams();
   const isFavoritesOnly = searchParams.get("favorites") === "true";
   const selectedGender = propGender || searchParams.get("gender") || "all";
+  const urlSizesParam = searchParams.get("sizes");
+  const urlSizes = urlSizesParam
+    ? urlSizesParam.split(",").filter(Boolean)
+    : [];
+  const activeSizes =
+    urlSizesParam !== null
+      ? urlSizes
+      : propSizes && propSizes.length > 0
+      ? propSizes
+      : [];
+  const urlInStockParam = searchParams.get("inStock");
+  const activeInStockOnly =
+    urlInStockParam !== null
+      ? urlInStockParam === "true"
+      : Boolean(propInStockOnly);
 
-  const [products, setProducts] = useState<any[]>(initialProducts);
+  // Restrict queried brands to the active feed's availableBrands (e.g. My Radar vs Explore)
+  const effectiveBrands =
+    selectedBrands.length > 0
+      ? availableBrands.length > 0
+        ? selectedBrands.filter((b) => availableBrands.includes(b))
+        : selectedBrands
+      : availableBrands;
+  const hasUnmatchedBrandFilter =
+    selectedBrands.length > 0 && availableBrands.length > 0 && effectiveBrands.length === 0;
+
+  const availableBrandsKey = JSON.stringify(availableBrands);
+  const selectedBrandsKey = JSON.stringify(selectedBrands);
+  const selectedCategoriesKey = JSON.stringify(selectedCategories);
+  const activeSizesKey = JSON.stringify(activeSizes);
+  const filterResetKey = `${availableBrandsKey}|${selectedBrandsKey}|${selectedCategoriesKey}|${activeSizesKey}|${activeInStockOnly}|${maxPriceFilter ?? ""}|${sortBy}|${selectedGender}|${isFavoritesOnly}`;
+
+  const [products, setProducts] = useState<LocalCatalogProduct[]>(initialProducts);
+  const [prevInitialProducts, setPrevInitialProducts] =
+    useState<LocalCatalogProduct[]>(initialProducts);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [visibleCount, setVisibleCount] = useState<number>(ITEMS_PER_CHUNK);
+  const [prevFilterResetKey, setPrevFilterResetKey] = useState<string>(filterResetKey);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  if (initialProducts !== prevInitialProducts) {
+    setPrevInitialProducts(initialProducts);
+    setProducts(initialProducts);
+  }
+
+  if (filterResetKey !== prevFilterResetKey) {
+    setPrevFilterResetKey(filterResetKey);
+    setVisibleCount(ITEMS_PER_CHUNK);
+  }
 
   useEffect(() => {
     const updateFavs = () => {
@@ -55,22 +145,6 @@ function PGliteCatalogViewContent({
   }, []);
 
   useEffect(() => {
-    setProducts(initialProducts);
-  }, [initialProducts]);
-
-  // Reset pagination window when filters change
-  useEffect(() => {
-    setVisibleCount(ITEMS_PER_CHUNK);
-  }, [
-    JSON.stringify(selectedBrands),
-    JSON.stringify(selectedCategories),
-    maxPriceFilter,
-    sortBy,
-    selectedGender,
-    isFavoritesOnly,
-  ]);
-
-  useEffect(() => {
     let isMounted = true;
 
     async function syncAndQueryPGlite() {
@@ -80,7 +154,10 @@ function PGliteCatalogViewContent({
           setTimeout(() => reject(new Error("PGlite WASM timeout")), 1500)
         );
 
-        const pglite = (await Promise.race([pglitePromise, timeoutPromise])) as any;
+        const pglite = (await Promise.race([
+          pglitePromise,
+          timeoutPromise,
+        ])) as PGliteQueryClient | null;
 
         if (!pglite) return;
 
@@ -90,7 +167,7 @@ function PGliteCatalogViewContent({
               await pglite.query(
                 `INSERT INTO brands (id, name, domain, platform_type, sync_status, base_country, default_currency)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)
-                 ON CONFLICT (id) DO UPDATE SET name = $2, domain = $3, default_currency = $7`,
+                 ON CONFLICT (id) DO UPDATE SET name = $2, domain = $3, base_country = $6, default_currency = $7`,
                 [
                   p.brand.id,
                   p.brand.name,
@@ -104,9 +181,9 @@ function PGliteCatalogViewContent({
             }
 
             await pglite.query(
-              `INSERT INTO products (id, brand_id, canonical_url, external_id, title, description, category, main_image)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-               ON CONFLICT (id) DO UPDATE SET title = $5, category = $7, main_image = $8, canonical_url = $3`,
+              `INSERT INTO products (id, brand_id, canonical_url, external_id, title, description, category, main_image, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+               ON CONFLICT (id) DO UPDATE SET title = $5, category = $7, main_image = $8, canonical_url = $3, created_at = COALESCE($9, products.created_at)`,
               [
                 p.id,
                 p.brandId,
@@ -116,15 +193,19 @@ function PGliteCatalogViewContent({
                 p.description || "",
                 p.category || "OTHER",
                 p.mainImage || "",
+                p.createdAt || null,
               ]
             );
 
             if (p.variants && p.variants.length > 0) {
+              const brandCurr = p.brand?.defaultCurrency || "USD";
               for (const v of p.variants) {
+                const resolvedCurr = resolveVariantCurrency(v, brandCurr);
+                const resolvedNormPrice = getVariantPriceInUsd(v, brandCurr);
                 await pglite.query(
-                  `INSERT INTO product_variants (id, product_id, size, color, sku, availability, raw_price, currency, normalized_price)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                   ON CONFLICT (id) DO UPDATE SET availability = $6, raw_price = $7, normalized_price = $9`,
+                  `INSERT INTO product_variants (id, product_id, size, color, sku, availability, raw_price, compare_at_price, currency, normalized_price)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                   ON CONFLICT (id) DO UPDATE SET availability = $6, raw_price = $7, compare_at_price = $8, currency = $9, normalized_price = $10`,
                   [
                     v.id,
                     p.id,
@@ -133,56 +214,137 @@ function PGliteCatalogViewContent({
                     v.sku || "",
                     v.availability,
                     v.rawPrice,
-                    v.currency,
-                    v.normalizedPrice,
+                    v.compareAtPrice ?? null,
+                    resolvedCurr,
+                    resolvedNormPrice,
                   ]
                 );
+
+                if (Array.isArray(v.dropEvents)) {
+                  for (const de of v.dropEvents) {
+                    if (!de?.id) continue;
+                    await pglite.query(
+                      `INSERT INTO drop_events (id, variant_id, previous_status, new_status, detected_at)
+                       VALUES ($1, $2, $3, $4, $5)
+                       ON CONFLICT (id) DO NOTHING`,
+                      [
+                        de.id,
+                        v.id,
+                        de.previousStatus,
+                        de.newStatus,
+                        de.detectedAt || null,
+                      ]
+                    );
+                  }
+                }
               }
             }
           }
         }
 
+        const parsedAvailBrands: string[] = JSON.parse(availableBrandsKey);
+        const parsedSelBrands: string[] = JSON.parse(selectedBrandsKey);
+        const parsedSelCategories: string[] = JSON.parse(selectedCategoriesKey);
+        const parsedActiveSizes: string[] = JSON.parse(activeSizesKey);
+
+        const queryBrands =
+          parsedSelBrands.length > 0
+            ? parsedAvailBrands.length > 0
+              ? parsedSelBrands.filter((b) => parsedAvailBrands.includes(b))
+              : parsedSelBrands
+            : parsedAvailBrands;
+        const unmatchedBrand =
+          parsedSelBrands.length > 0 &&
+          parsedAvailBrands.length > 0 &&
+          queryBrands.length === 0;
+
+        if (unmatchedBrand) {
+          if (isMounted) {
+            setProducts([]);
+          }
+          return;
+        }
+
         // Query PGlite in WASM memory
-        const sqlParams: any[] = [];
+        const sqlParams: unknown[] = [];
         const conditions: string[] = [];
 
-        if (selectedBrands.length > 0) {
-          sqlParams.push(selectedBrands);
+        if (queryBrands.length > 0) {
+          sqlParams.push(queryBrands);
           conditions.push(`b.name = ANY($${sqlParams.length})`);
         }
 
-        if (selectedCategories.length > 0) {
-          sqlParams.push(selectedCategories);
+        if (parsedSelCategories.length > 0) {
+          sqlParams.push(parsedSelCategories);
           conditions.push(`p.category = ANY($${sqlParams.length})`);
         }
 
         if (maxPriceFilter && maxPriceFilter > 0) {
           sqlParams.push(maxPriceFilter);
-          conditions.push(`pv.normalized_price <= $${sqlParams.length}`);
+          conditions.push(
+            `EXISTS (
+              SELECT 1 FROM product_variants pv_price
+              WHERE pv_price.product_id = p.id
+                AND pv_price.normalized_price <= $${sqlParams.length}
+            )`
+          );
         }
 
-        let whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+        if (activeInStockOnly || parsedActiveSizes.length > 0) {
+          conditions.push(
+            `EXISTS (
+              SELECT 1 FROM product_variants pv_stock
+              WHERE pv_stock.product_id = p.id
+                AND pv_stock.availability = 'IN_STOCK'
+            )`
+          );
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
         let orderBy = "p.created_at DESC";
         if (sortBy === "price_asc") {
-          orderBy = "pv.normalized_price ASC";
+          orderBy = "MIN(pv.normalized_price) ASC NULLS LAST";
         } else if (sortBy === "price_desc") {
-          orderBy = "pv.normalized_price DESC";
+          orderBy = "MAX(pv.normalized_price) DESC NULLS LAST";
         }
 
-        const result = await pglite.query(
+        const result = await pglite.query<PGliteProductRow>(
           `SELECT 
-            p.id, p.title, p.description, p.category, p.main_image as "mainImage", p.canonical_url as "canonicalUrl",
+            p.id, p.title, p.description, p.category, p.main_image as "mainImage", p.canonical_url as "canonicalUrl", p.created_at as "createdAt",
             b.id as "brandId", b.name as "brandName", b.domain as "brandDomain", b.default_currency as "brandDefaultCurrency",
-            json_agg(json_build_object(
-              'id', pv.id,
-              'size', pv.size,
-              'color', pv.color,
-              'availability', pv.availability,
-              'rawPrice', pv.raw_price,
-              'currency', pv.currency,
-              'normalizedPrice', pv.normalized_price
-            )) as variants
+            COALESCE(
+              json_agg(
+                json_build_object(
+                  'id', pv.id,
+                  'size', pv.size,
+                  'color', pv.color,
+                  'availability', pv.availability,
+                  'rawPrice', pv.raw_price,
+                  'compareAtPrice', pv.compare_at_price,
+                  'currency', pv.currency,
+                  'normalizedPrice', pv.normalized_price,
+                  'dropEvents', COALESCE(
+                    (
+                      SELECT json_agg(
+                        json_build_object(
+                          'id', de.id,
+                          'variantId', de.variant_id,
+                          'previousStatus', de.previous_status,
+                          'newStatus', de.new_status,
+                          'detectedAt', de.detected_at
+                        )
+                        ORDER BY de.detected_at DESC
+                      )
+                      FROM drop_events de
+                      WHERE de.variant_id = pv.id
+                    ),
+                    '[]'::json
+                  )
+                )
+              ) FILTER (WHERE pv.id IS NOT NULL),
+              '[]'::json
+            ) as variants
           FROM products p
           JOIN brands b ON p.brand_id = b.id
           LEFT JOIN product_variants pv ON p.id = pv.product_id
@@ -193,21 +355,64 @@ function PGliteCatalogViewContent({
         );
 
         if (isMounted && result && result.rows) {
-          const mapped = result.rows.map((row: any) => ({
-            id: row.id,
-            title: row.title,
-            description: row.description,
-            category: row.category,
-            mainImage: row.mainImage,
-            canonicalUrl: row.canonicalUrl,
-            brand: {
-              id: row.brandId,
-              name: row.brandName,
-              domain: row.brandDomain,
-              defaultCurrency: row.brandDefaultCurrency,
-            },
-            variants: row.variants || [],
-          }));
+          const initialMap = new Map<string, LocalCatalogProduct>(
+            (initialProducts || []).map((ip: LocalCatalogProduct) => [ip.id, ip])
+          );
+          const mapped: LocalCatalogProduct[] = result.rows.map((row: PGliteProductRow) => {
+            const initialProd = initialMap.get(row.id);
+            const initialVariantMap = new Map<string, LocalCatalogVariant>(
+              (initialProd?.variants || []).map((iv: LocalCatalogVariant) => [iv.id, iv])
+            );
+            const mergedVariants: LocalCatalogVariant[] = (row.variants || []).map(
+              (v: LocalCatalogVariant) => {
+                const iv = initialVariantMap.get(v.id);
+                const dbDropEvents = Array.isArray(v.dropEvents) ? v.dropEvents : [];
+                const initialDropEvents = Array.isArray(iv?.dropEvents) ? iv.dropEvents : [];
+                return {
+                  ...v,
+                  rawPrice: v.rawPrice != null ? Number(v.rawPrice) : 0,
+                  compareAtPrice: v.compareAtPrice != null ? Number(v.compareAtPrice) : null,
+                  normalizedPrice: v.normalizedPrice != null ? Number(v.normalizedPrice) : 0,
+                  createdAt: iv?.createdAt ?? v.createdAt ?? null,
+                  dropEvents: initialDropEvents.length > 0 ? initialDropEvents : dbDropEvents,
+                  isRestocked: iv?.isRestocked,
+                };
+              }
+            );
+
+            const hydratedProduct: LocalCatalogProduct = {
+              id: row.id,
+              title: row.title,
+              description: row.description,
+              category: row.category,
+              mainImage: row.mainImage,
+              canonicalUrl: row.canonicalUrl,
+              createdAt:
+                initialProd !== undefined
+                  ? initialProd.createdAt ?? null
+                  : row.createdAt ?? null,
+              isNewDrop: initialProd?.isNewDrop,
+              isRestocked: initialProd?.isRestocked,
+              hasPriceDrop: initialProd?.hasPriceDrop,
+              restockedSizes: initialProd?.restockedSizes,
+              brand: {
+                id: row.brandId,
+                name: row.brandName,
+                domain: row.brandDomain,
+                defaultCurrency: row.brandDefaultCurrency,
+              },
+              variants: mergedVariants,
+            };
+
+            const computedBadges = getProductDropBadges(hydratedProduct);
+            return {
+              ...hydratedProduct,
+              isNewDrop: computedBadges.isNewDrop,
+              isRestocked: computedBadges.isRestocked,
+              hasPriceDrop: computedBadges.hasPriceDrop,
+              restockedSizes: computedBadges.restockedSizes,
+            };
+          });
           setProducts(mapped);
         }
       } catch (err) {
@@ -222,31 +427,46 @@ function PGliteCatalogViewContent({
     };
   }, [
     initialProducts,
-    JSON.stringify(selectedBrands),
-    JSON.stringify(selectedCategories),
+    availableBrandsKey,
+    selectedBrandsKey,
+    selectedCategoriesKey,
+    activeSizesKey,
+    activeInStockOnly,
     maxPriceFilter,
     sortBy,
   ]);
 
-  let displayProducts = products;
+  let displayProducts = hasUnmatchedBrandFilter
+    ? []
+    : effectiveBrands.length > 0
+    ? products.filter((p) => !p.brand?.name || effectiveBrands.includes(p.brand.name))
+    : products;
 
   if (isFavoritesOnly) {
     displayProducts = displayProducts.filter((p) => favorites.includes(p.id));
   }
 
   displayProducts = filterProductsByGender(displayProducts, selectedGender);
+  displayProducts = filterProductsBySizeAndStock(
+    displayProducts,
+    activeSizes,
+    activeInStockOnly,
+    maxPriceFilter
+  );
 
   if (sortBy === "price_asc") {
-    displayProducts.sort((a, b) => {
-      const priceA = Number(a.variants?.[0]?.normalizedPrice || a.variants?.[0]?.rawPrice || 0);
-      const priceB = Number(b.variants?.[0]?.normalizedPrice || b.variants?.[0]?.rawPrice || 0);
-      return priceA - priceB;
+    displayProducts = [...displayProducts].sort((a, b) => {
+      return (
+        (getEffectiveProductPrice(a, activeSizes, activeInStockOnly) || getProductPriceInUsd(a)) -
+        (getEffectiveProductPrice(b, activeSizes, activeInStockOnly) || getProductPriceInUsd(b))
+      );
     });
   } else if (sortBy === "price_desc") {
-    displayProducts.sort((a, b) => {
-      const priceA = Number(a.variants?.[0]?.normalizedPrice || a.variants?.[0]?.rawPrice || 0);
-      const priceB = Number(b.variants?.[0]?.normalizedPrice || b.variants?.[0]?.rawPrice || 0);
-      return priceB - priceA;
+    displayProducts = [...displayProducts].sort((a, b) => {
+      return (
+        (getEffectiveProductPrice(b, activeSizes, activeInStockOnly) || getProductPriceInUsd(b)) -
+        (getEffectiveProductPrice(a, activeSizes, activeInStockOnly) || getProductPriceInUsd(a))
+      );
     });
   }
 
@@ -292,16 +512,29 @@ function PGliteCatalogViewContent({
               const isSoldOut =
                 product.variants &&
                 product.variants.length > 0 &&
-                product.variants.every((v: any) => v.availability === "OUT_OF_STOCK");
+                product.variants.every((v: LocalCatalogVariant) => v.availability === "OUT_OF_STOCK");
 
               const priceText = formatProductPrice(product);
+              const discountInfo = getProductDiscountInfo(product);
+              const compareAtPriceText = formatCompareAtPrice(product);
+              const outboundUrl = appendUtmParams(product.canonicalUrl);
+              const dropBadges = getProductDropBadges(product);
 
               return (
                 <a
                   key={product.id}
-                  href={product.canonicalUrl}
+                  href={outboundUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={() =>
+                    trackOutboundClick({
+                      productId: product.id,
+                      brandId: product.brand?.id || product.brandId,
+                      brandName: product.brand?.name,
+                      targetUrl: outboundUrl,
+                      source: "catalog",
+                    })
+                  }
                   className={`group block transition-all ${isSoldOut ? "opacity-60 grayscale-[0.3]" : ""}`}
                 >
                   <Card className="overflow-hidden border-0 bg-transparent shadow-none">
@@ -318,11 +551,40 @@ function PGliteCatalogViewContent({
                           className="object-cover w-full h-full transition-transform duration-500 group-hover:scale-105"
                         />
                         <div className="absolute top-2.5 left-2.5 flex flex-col gap-1.5 z-10">
-                          <Badge className="bg-background/90 text-foreground backdrop-blur-sm hover:bg-background text-[10px] sm:text-xs py-0.5 px-2 font-bold">
+                          <Badge className="bg-background/90 text-foreground backdrop-blur-sm hover:bg-background text-[10px] sm:text-xs py-0.5 px-2 font-bold w-fit">
                             {product.brand?.name}
                           </Badge>
+                          {dropBadges.isNewDrop && (
+                            <Badge
+                              data-badge="new-drop"
+                              title={t.newDropTooltip || "New release (dropped within the last 48 hours)"}
+                              className="bg-emerald-500/95 hover:bg-emerald-500 text-white border-0 shadow-sm backdrop-blur-sm text-[9px] sm:text-[10px] font-black uppercase tracking-wider py-0.5 px-2 flex items-center gap-1 w-fit"
+                            >
+                              <Sparkles className="w-2.5 h-2.5 fill-current" />
+                              {t.newDrop || "NEW DROP"}
+                            </Badge>
+                          )}
+                          {dropBadges.isRestocked && (
+                            <Badge
+                              data-badge="restocked"
+                              title={
+                                dropBadges.restockedSizes.length > 0
+                                  ? `${t.restockedTooltip || "Back in stock"}: ${dropBadges.restockedSizes.join(", ")}`
+                                  : t.restockedTooltip || "Back in stock"
+                              }
+                              className="bg-amber-500/95 hover:bg-amber-500 text-black border-0 shadow-sm backdrop-blur-sm text-[9px] sm:text-[10px] font-black uppercase tracking-wider py-0.5 px-2 flex items-center gap-1 w-fit"
+                            >
+                              <RotateCcw className="w-2.5 h-2.5" />
+                              {t.restocked || "RESTOCKED"}
+                            </Badge>
+                          )}
+                          {discountInfo.hasDiscount && discountInfo.discountPercent && (
+                            <Badge className="bg-rose-600 text-white hover:bg-rose-600 text-[10px] sm:text-xs py-0.5 px-2 font-black tracking-tight shadow-sm w-fit border-0">
+                              -{discountInfo.discountPercent}%
+                            </Badge>
+                          )}
                           {isSoldOut && (
-                            <Badge variant="destructive" className="text-[9px] font-black uppercase py-0.5 px-1.5">
+                            <Badge variant="destructive" className="text-[9px] font-black uppercase py-0.5 px-1.5 w-fit">
                               {t.soldOut || "ПРОДАНО"}
                             </Badge>
                           )}
@@ -354,23 +616,30 @@ function PGliteCatalogViewContent({
 
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center pb-6">
                           <div className="flex flex-wrap gap-1.5 justify-center px-4">
-                            {product.variants?.map((v: any) => (
-                              <span
-                                key={v.id}
-                                className={`px-2.5 py-1 flex items-center justify-center rounded-md text-xs font-bold ${
-                                  v.availability === "IN_STOCK"
-                                    ? "bg-white text-black"
-                                    : "bg-white/30 text-white/50 line-through"
-                                }`}
-                                title={
-                                  v.availability === "IN_STOCK"
-                                    ? t.inStock
-                                    : t.outOfStock
-                                }
-                              >
-                                {v.size}
-                              </span>
-                            ))}
+                            {product.variants?.map((v: LocalCatalogVariant) => {
+                              const isSizeMatched =
+                                v.availability === "IN_STOCK" &&
+                                isVariantSizeSelected(v.size, activeSizes);
+                              return (
+                                <span
+                                  key={v.id}
+                                  className={`px-2.5 py-1 flex items-center justify-center rounded-md text-xs font-bold ${
+                                    isSizeMatched
+                                      ? "bg-emerald-400 text-black ring-2 ring-white"
+                                      : v.availability === "IN_STOCK"
+                                      ? "bg-white text-black"
+                                      : "bg-white/30 text-white/50 line-through"
+                                  }`}
+                                  title={
+                                    v.availability === "IN_STOCK"
+                                      ? t.inStock
+                                      : t.outOfStock
+                                  }
+                                >
+                                  {v.size}
+                                </span>
+                              );
+                            })}
                           </div>
                         </div>
                       </div>
@@ -379,9 +648,20 @@ function PGliteCatalogViewContent({
                           <span className="line-clamp-1">{product.title}</span>
                           <ExternalLink className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                         </h3>
-                        <p className="text-muted-foreground font-semibold text-sm">
-                          {priceText}
-                        </p>
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <p
+                            className={`font-semibold text-sm ${
+                              discountInfo.hasDiscount ? "text-rose-500" : "text-muted-foreground"
+                            }`}
+                          >
+                            {priceText}
+                          </p>
+                          {discountInfo.hasDiscount && compareAtPriceText && (
+                            <span className="text-xs text-muted-foreground/60 line-through font-normal">
+                              {compareAtPriceText}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </CardContent>
                   </Card>

@@ -3,6 +3,10 @@ import { AvailabilityStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { extractMetadata } from "./tier2-extractor";
 import { inferCategory } from "./category-classifier";
+import { upsertVariantWithDropEvent } from "./drop-events";
+import { normalizePriceToUsd } from "./currency";
+import { detectStoreLocale } from "./engine-detector";
+import { ensureTablesExist } from "./db-init";
 
 export interface ChunkSyncResult {
   page: number;
@@ -16,16 +20,46 @@ export async function syncBrandChunkServerless(
   page: number = 1,
   limit: number = 250
 ): Promise<ChunkSyncResult> {
-  const brand = await prisma.brand.findUnique({ where: { id: brandId } });
+  if (page === 1) {
+    await ensureTablesExist().catch(() => {});
+  }
+  let brand = await prisma.brand.findUnique({ where: { id: brandId } });
   if (!brand) throw new Error("Brand not found");
 
+  // Auto-detect real store currency & country on first chunk if still set to default USD/US
+  if (page === 1 && brand.defaultCurrency === "USD" && brand.baseCountry === "US") {
+    try {
+      const locale = await detectStoreLocale(`https://${brand.domain}`);
+      if (
+        (locale.currency && locale.currency !== "USD") ||
+        (locale.country && locale.country !== "US")
+      ) {
+        brand = await prisma.brand.update({
+          where: { id: brand.id },
+          data: {
+            defaultCurrency: locale.currency || brand.defaultCurrency,
+            baseCountry: locale.country || brand.baseCountry,
+          },
+        });
+        if (locale.currency && locale.currency !== "USD") {
+          await prisma.productVariant.updateMany({
+            where: { product: { brandId: brand.id }, currency: "USD" },
+            data: { currency: locale.currency },
+          });
+        }
+      }
+    } catch {
+      // Ignore locale detection error during sync
+    }
+  }
+
   const rates = await prisma.exchangeRate.findMany();
-  const rateMap = new Map(rates.map((r: { targetCurrency: string; rate: any }) => [r.targetCurrency, Number(r.rate)]));
+  const rateMap = new Map<string, number>(
+    rates.map((r: { targetCurrency: string; rate: unknown }) => [r.targetCurrency, Number(r.rate)])
+  );
 
   const getNormalizedPrice = (price: number, currency: string): number => {
-    if (currency === "USD") return price;
-    const rate = rateMap.get(currency);
-    return rate ? price / Number(rate) : price;
+    return normalizePriceToUsd(price, currency, rateMap);
   };
 
   let processedCount = 0;
@@ -93,33 +127,23 @@ export async function syncBrandChunkServerless(
         });
 
         const rawPrice = meta.price;
+        const compareAtPrice =
+          meta.compareAtPrice && Number.isFinite(meta.compareAtPrice) && meta.compareAtPrice > rawPrice
+            ? meta.compareAtPrice
+            : null;
         const currency = meta.currency || brand.defaultCurrency;
         const normalizedPrice = getNormalizedPrice(rawPrice, currency);
 
-        await prisma.productVariant.upsert({
-          where: {
-            productId_size_color: {
-              productId: product.id,
-              size: "OS",
-              color: "DEFAULT",
-            },
-          },
-          update: {
-            availability: "IN_STOCK",
-            rawPrice,
-            currency,
-            normalizedPrice,
-          },
-          create: {
-            productId: product.id,
-            externalId: meta.url,
-            size: "OS",
-            color: "DEFAULT",
-            availability: "IN_STOCK",
-            rawPrice,
-            currency,
-            normalizedPrice,
-          },
+        await upsertVariantWithDropEvent(prisma, {
+          productId: product.id,
+          externalId: meta.url,
+          size: "OS",
+          color: "DEFAULT",
+          availability: meta.availability === "OUT_OF_STOCK" ? "OUT_OF_STOCK" : "IN_STOCK",
+          rawPrice,
+          compareAtPrice,
+          currency,
+          normalizedPrice,
         });
         processedCount++;
       } catch (e) {
@@ -187,36 +211,26 @@ export async function syncBrandChunkServerless(
           color = color || "DEFAULT";
 
           const rawPrice = parseFloat(sv.price);
+          const parsedCompareAt = sv.compare_at_price ? parseFloat(sv.compare_at_price) : null;
+          const compareAtPrice =
+            parsedCompareAt !== null && Number.isFinite(parsedCompareAt) && parsedCompareAt > rawPrice
+              ? parsedCompareAt
+              : null;
           const availability: AvailabilityStatus = sv.available ? "IN_STOCK" : "OUT_OF_STOCK";
 
           const normalizedPrice = getNormalizedPrice(rawPrice, brand.defaultCurrency);
 
-          await prisma.productVariant.upsert({
-            where: {
-              productId_size_color: {
-                productId: product.id,
-                size,
-                color,
-              },
-            },
-            update: {
-              availability,
-              rawPrice,
-              currency: brand.defaultCurrency,
-              normalizedPrice,
-              sku,
-            },
-            create: {
-              productId: product.id,
-              externalId: sv.id.toString(),
-              size,
-              color,
-              sku,
-              availability,
-              rawPrice,
-              currency: brand.defaultCurrency,
-              normalizedPrice,
-            },
+          await upsertVariantWithDropEvent(prisma, {
+            productId: product.id,
+            externalId: sv.id.toString(),
+            size,
+            color,
+            sku,
+            availability,
+            rawPrice,
+            compareAtPrice,
+            currency: brand.defaultCurrency,
+            normalizedPrice,
           });
         }
         processedCount++;

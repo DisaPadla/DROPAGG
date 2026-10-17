@@ -135,7 +135,12 @@ export function isMaleProduct(
 }
 
 export function filterProductsByGender<
-  T extends { title?: string; category?: string; description?: string; canonicalUrl?: string }
+  T extends {
+    title?: string | null;
+    category?: string | null;
+    description?: string | null;
+    canonicalUrl?: string | null;
+  }
 >(products: T[], gender: string): T[] {
   if (!gender || gender === "all") return products;
 

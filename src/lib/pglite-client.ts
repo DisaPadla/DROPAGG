@@ -46,8 +46,19 @@ export async function getPGliteInstance(): Promise<PGlite> {
           sku TEXT,
           availability TEXT DEFAULT 'OUT_OF_STOCK',
           raw_price NUMERIC,
+          compare_at_price NUMERIC,
           currency TEXT,
           normalized_price NUMERIC
+        );
+
+        ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS compare_at_price NUMERIC;
+
+        CREATE TABLE IF NOT EXISTS drop_events (
+          id TEXT PRIMARY KEY,
+          variant_id TEXT NOT NULL,
+          previous_status TEXT NOT NULL,
+          new_status TEXT NOT NULL,
+          detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
       `);
 
