@@ -1,5 +1,7 @@
+import { PlatformType } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { ingestionQueue } from "../lib/queue";
+import { detectEngine, extractLocaleFromDomain } from "../lib/engine-detector";
 
 async function main() {
   const name = process.argv[2];
@@ -19,16 +21,30 @@ async function main() {
   let brand = await prisma.brand.findUnique({ where: { domain } });
 
   if (!brand) {
+    const domainLocale = extractLocaleFromDomain(domain);
+    let platformType: PlatformType = "SHOPIFY";
+    let baseCountry = domainLocale.country || "US";
+    let defaultCurrency = domainLocale.currency || "USD";
+
+    try {
+      const detection = await detectEngine(domain);
+      if (detection?.platform) platformType = detection.platform;
+      if (detection?.country) baseCountry = detection.country;
+      if (detection?.currency) defaultCurrency = detection.currency;
+    } catch {
+      // Fallback to domain locale or US/USD
+    }
+
     brand = await prisma.brand.create({
       data: {
         name,
         domain,
-        platformType: "SHOPIFY", // Для начала работаем с Shopify
-        baseCountry: "US",
-        defaultCurrency: "USD" // Базовая валюта
+        platformType,
+        baseCountry,
+        defaultCurrency,
       }
     });
-    console.log(`✅ Бренд сохранен в базу с ID: ${brand.id}`);
+    console.log(`✅ Бренд сохранен в базу с ID: ${brand.id} (${baseCountry} • ${defaultCurrency})`);
   } else {
     console.log(`⚠️ Бренд с таким доменом уже существует (ID: ${brand.id})`);
   }

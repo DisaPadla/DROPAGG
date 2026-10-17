@@ -85,8 +85,21 @@ export const TRANSLATIONS = {
 
     // Status & Sold Out
     inStock: "В наявності",
+    inStockOnly: "Тільки в наявності",
+    hideSoldOut: "Приховати Sold Out",
+    size: "Розмір",
+    sizes: "Розміри (в наявності)",
     outOfStock: "Немає в наявності",
     soldOut: "ПРОДАНО",
+    newDrop: "NEW DROP",
+    restocked: "RESTOCKED",
+    newDropTooltip: "Новий реліз (вийшов за останні 48 годин)",
+    restockedTooltip: "Знову в наявності (поповнення розмірів)",
+    navRadar: "Мій Радар",
+    feedExplore: "Explore • Глобальний каталог",
+    feedRadar: "My Radar • Моя стрічка",
+    emptyRadarTitle: "Ваш персональний радар порожній",
+    emptyRadarDesc: "Підпишіться на перевірені бренди з глобального каталогу Explore в 1 клік або додайте власне посилання на магазин, щоб сформувати персональну стрічку дропів.",
   },
 
   en: {
@@ -173,8 +186,21 @@ export const TRANSLATIONS = {
 
     // Status & Sold Out
     inStock: "In Stock",
+    inStockOnly: "In Stock Only",
+    hideSoldOut: "Hide Sold Out",
+    size: "Size",
+    sizes: "Sizes (In Stock)",
     outOfStock: "Out of Stock",
     soldOut: "SOLD OUT",
+    newDrop: "NEW DROP",
+    restocked: "RESTOCKED",
+    newDropTooltip: "New release (dropped within the last 48 hours)",
+    restockedTooltip: "Back in stock (size restocked)",
+    navRadar: "My Radar",
+    feedExplore: "Explore • Global Catalog",
+    feedRadar: "My Radar • Personal Feed",
+    emptyRadarTitle: "Your Personal Radar is Empty",
+    emptyRadarDesc: "Follow verified brands from the global Explore catalog in one click, or add a store URL to build your personal drop feed.",
   },
 };
 

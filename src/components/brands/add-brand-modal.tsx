@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Plus, X, Globe, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/context/language-context";
+
+const emptySubscribe = () => () => {};
 
 export function AddBrandModal() {
   const router = useRouter();
@@ -15,11 +17,11 @@ export function AddBrandModal() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,10 +50,20 @@ export function AddBrandModal() {
       setTimeout(() => {
         setIsOpen(false);
         setSuccessMsg(null);
-        window.location.href = "/";
+        const isRadar = window.location.search.includes("feed=radar");
+        const isBrandsPage = window.location.pathname === "/brands";
+        if (isBrandsPage) {
+          router.refresh();
+        } else if (isRadar) {
+          router.push("/?feed=radar");
+          router.refresh();
+        } else {
+          router.push("/");
+          router.refresh();
+        }
       }, 500);
-    } catch (err: any) {
-      setError(err.message || "Something went wrong");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
     }

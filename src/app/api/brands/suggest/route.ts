@@ -1,13 +1,36 @@
 import { NextResponse } from "next/server";
+import { PlatformType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { detectEngine } from "@/lib/engine-detector";
+import { detectEngine, detectStoreLocale, extractLocaleFromDomain } from "@/lib/engine-detector";
 import { syncBrandChunkServerless } from "@/lib/serverless-ingestor";
 import { ensureTablesExist } from "@/lib/db-init";
+import { getCurrentUser } from "@/lib/session";
 
 export const maxDuration = 60;
 
-function formatErrorMessage(error: any): string {
-  const msg = error?.message || String(error);
+async function linkBrandToCurrentUser(brandId: string) {
+  try {
+    const currentUser = await getCurrentUser();
+    await prisma.userBrand.upsert({
+      where: {
+        userId_brandId: {
+          userId: currentUser.id,
+          brandId,
+        },
+      },
+      update: {},
+      create: {
+        userId: currentUser.id,
+        brandId,
+      },
+    });
+  } catch (err) {
+    console.warn("[Suggest API] Could not link brand to UserBrand:", err);
+  }
+}
+
+function formatErrorMessage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
   if (!process.env.DATABASE_URL) {
     return "Database connection string is missing. Please set DATABASE_URL in Vercel settings or .env file.";
   }
@@ -45,7 +68,7 @@ export async function POST(req: Request) {
     try {
       const cleanInput = url.trim().startsWith("http") ? url.trim() : `https://${url.trim()}`;
       parsedUrl = new URL(cleanInput);
-    } catch (e) {
+    } catch {
       return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
     }
 
@@ -61,18 +84,50 @@ export async function POST(req: Request) {
     let brand;
     try {
       brand = await prisma.brand.findUnique({ where: { domain } });
-    } catch (dbErr: any) {
-      console.warn("[Suggest API] Brand query failed, attempting ensureTablesExist...", dbErr?.message);
+    } catch (dbErr: unknown) {
+      console.warn(
+        "[Suggest API] Brand query failed, attempting ensureTablesExist...",
+        dbErr instanceof Error ? dbErr.message : dbErr
+      );
       try {
         await ensureTablesExist();
         brand = await prisma.brand.findUnique({ where: { domain } });
-      } catch (retryErr: any) {
+      } catch (retryErr: unknown) {
         console.error("[Suggest API] DB error after auto-init attempt:", retryErr);
         return NextResponse.json({ error: formatErrorMessage(retryErr) }, { status: 500 });
       }
     }
 
     if (brand) {
+      // If existing brand had default USD/US, verify real store currency & country before re-sync
+      if (brand.defaultCurrency === "USD" && brand.baseCountry === "US") {
+        try {
+          const locale = await detectStoreLocale(rootOrigin);
+          if (
+            (locale.currency && locale.currency !== "USD") ||
+            (locale.country && locale.country !== "US")
+          ) {
+            brand = await prisma.brand.update({
+              where: { id: brand.id },
+              data: {
+                defaultCurrency: locale.currency || brand.defaultCurrency,
+                baseCountry: locale.country || brand.baseCountry,
+              },
+            });
+            if (locale.currency && locale.currency !== "USD") {
+              await prisma.productVariant.updateMany({
+                where: { product: { brandId: brand.id }, currency: "USD" },
+                data: { currency: locale.currency },
+              });
+            }
+          }
+        } catch (locErr) {
+          console.warn("[Suggest API] Locale refresh warning:", locErr);
+        }
+      }
+
+      await linkBrandToCurrentUser(brand.id);
+
       // Trigger background chunk sync and return immediately
       syncBrandChunkServerless(brand.id, 1, 250).catch((err) => {
         console.warn("[Suggest API] Background re-sync error:", err);
@@ -81,33 +136,44 @@ export async function POST(req: Request) {
       return NextResponse.json({
         success: true,
         brand,
-        message: `Store ${name} is already in your workspace!`,
+        message: `Store ${name} added to your Personal Radar!`,
       });
     }
 
-    // 3. Fast Engine Detection with fallback to SHOPIFY
-    let platformType: any = "SHOPIFY";
+    // 3. Fast Engine & Store Currency/Country Detection with fallback
+    const domainFallback = extractLocaleFromDomain(rootOrigin);
+    let platformType: PlatformType = "SHOPIFY";
+    let baseCountry: string = domainFallback.country || "US";
+    let defaultCurrency: string = domainFallback.currency || "USD";
+
     try {
       const detection = await detectEngine(rootOrigin);
       if (detection?.platform) {
         platformType = detection.platform;
       }
+      if (detection?.country) {
+        baseCountry = detection.country;
+      }
+      if (detection?.currency) {
+        defaultCurrency = detection.currency;
+      }
     } catch (detErr) {
       console.warn("[Suggest API] Engine detection fallback to SHOPIFY:", detErr);
     }
 
-    // 4. Create Brand in DB immediately
+    // 4. Create Brand in DB immediately with detected country & currency
     try {
       brand = await prisma.brand.create({
         data: {
           name,
           domain,
           platformType,
-          baseCountry: "US",
-          defaultCurrency: "USD",
+          baseCountry,
+          defaultCurrency,
         },
       });
-    } catch (createErr: any) {
+      await linkBrandToCurrentUser(brand.id);
+    } catch (createErr: unknown) {
       console.error("[Suggest API] Brand creation error:", createErr);
       return NextResponse.json({ error: formatErrorMessage(createErr) }, { status: 500 });
     }
@@ -131,7 +197,7 @@ export async function POST(req: Request) {
       brand,
       message: `Successfully added ${name}! Importing drops...`,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[Suggest API Error]", error);
     return NextResponse.json({ error: formatErrorMessage(error) }, { status: 500 });
   }

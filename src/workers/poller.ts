@@ -68,8 +68,9 @@ export const pollerWorker = new Worker(
         console.log(`[Poller] No changes for brand ${brand.name}. Skipping ingestion.`);
       }
 
-    } catch (error: any) {
-      console.error(`[Poller] Error polling brand ${brand.name}:`, error.message);
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[Poller] Error polling brand ${brand.name}:`, errMsg);
       throw error; // Let BullMQ handle retries
     }
   },

@@ -4,9 +4,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 import { meiliClient, PRODUCTS_INDEX } from "./meilisearch";
 
-const globalForPrisma = global as unknown as { prisma: any; prismaBase: PrismaClient };
-
-export const prisma = globalForPrisma.prisma || (() => {
+function createPrismaClient() {
   const connectionString = process.env.DATABASE_URL;
   const isLocal =
     !connectionString ||
@@ -20,12 +18,11 @@ export const prisma = globalForPrisma.prisma || (() => {
   });
   const adapter = new PrismaPg(pool);
   const prismaBase = new PrismaClient({ adapter });
-  globalForPrisma.prismaBase = prismaBase; // Cache it for upsert
 
   return prismaBase.$extends({
     query: {
       product: {
-        async upsert({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+        async upsert({ args, query }) {
           // Execute the actual DB query
           const result = await query(args);
           
@@ -68,6 +65,15 @@ export const prisma = globalForPrisma.prisma || (() => {
       }
     }
   });
-})();
+}
+
+type ExtendedPrismaClient = ReturnType<typeof createPrismaClient>;
+
+const globalForPrisma = global as unknown as {
+  prisma?: ExtendedPrismaClient;
+  prismaBase?: PrismaClient;
+};
+
+export const prisma = globalForPrisma.prisma || createPrismaClient();
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;

@@ -34,7 +34,7 @@ export async function POST() {
     }
 
     // Run parallel serverless sync for all stores
-    const syncPromises = brands.map(async (b: any) => {
+    const syncPromises = brands.map(async (b: { id: string; name: string }) => {
       try {
         return await syncBrandServerless(b.id);
       } catch (e) {
@@ -71,7 +71,7 @@ export async function POST() {
       success: true,
       message: `Synced ${totalItems} items across ${brands.length} stores`,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[Sync All API Error]", error);
     return NextResponse.json({ error: "Failed to trigger sync" }, { status: 500 });
   }

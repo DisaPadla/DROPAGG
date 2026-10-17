@@ -35,7 +35,7 @@ export default function SuggestBrandPage() {
         setStatus("error");
         setMessage(data.error || "Failed to add brand.");
       }
-    } catch (err) {
+    } catch {
       setStatus("error");
       setMessage("Network error occurred.");
     }

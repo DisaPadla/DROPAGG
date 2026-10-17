@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { User, Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { DEMO_USERS } from "@/lib/demo-users";
 
 interface UserSwitcherProps {
@@ -34,6 +34,14 @@ export function UserSwitcher({ currentUser }: UserSwitcherProps) {
 
       if (res.ok) {
         setIsOpen(false);
+        if (typeof window !== "undefined") {
+          const params = new URLSearchParams(window.location.search);
+          if (params.get("feed") === "radar" && params.has("brands")) {
+            params.delete("brands");
+            const qs = params.toString();
+            router.push(qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+          }
+        }
         router.refresh();
       }
     } catch (e) {

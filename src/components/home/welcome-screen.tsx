@@ -45,8 +45,8 @@ export function WelcomeScreen() {
       const targetHref = brandName ? `/?brands=${brandName}&t=${Date.now()}` : `/?t=${Date.now()}`;
 
       window.location.href = targetHref;
-    } catch (err: any) {
-      setError(err.message || "Failed to add store");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to add store");
       setStatusMessage(null);
       setLoading(null);
     }

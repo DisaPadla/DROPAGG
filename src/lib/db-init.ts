@@ -84,12 +84,17 @@ export async function ensureTablesExist() {
         "sku" TEXT,
         "availability" "AvailabilityStatus" NOT NULL DEFAULT 'OUT_OF_STOCK',
         "rawPrice" DECIMAL(10, 2) NOT NULL,
+        "compareAtPrice" DECIMAL(10, 2),
         "currency" TEXT NOT NULL,
         "normalizedPrice" DECIMAL(10, 2),
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "ProductVariant_productId_size_color_key" UNIQUE ("productId", "size", "color")
       );
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "ProductVariant" ADD COLUMN IF NOT EXISTS "compareAtPrice" DECIMAL(10, 2);
     `);
 
     // 7. Create ExchangeRate table
@@ -111,6 +116,19 @@ export async function ensureTablesExist() {
         "previousStatus" "AvailabilityStatus" NOT NULL,
         "newStatus" "AvailabilityStatus" NOT NULL,
         "detectedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 9. Create OutboundClick table
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "OutboundClick" (
+        "id" TEXT PRIMARY KEY,
+        "productId" TEXT REFERENCES "Product"("id") ON DELETE SET NULL,
+        "brandId" TEXT REFERENCES "Brand"("id") ON DELETE SET NULL,
+        "userId" TEXT,
+        "targetUrl" TEXT NOT NULL,
+        "source" TEXT NOT NULL DEFAULT 'catalog',
+        "clickedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
