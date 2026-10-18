@@ -1,12 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { RefreshCw, Check } from "lucide-react";
 import { useLanguage } from "@/context/language-context";
+import { syncAllLocalBrands } from "@/lib/local-db";
 
 export function SyncAllButton() {
-  const router = useRouter();
   const { t } = useLanguage();
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -18,17 +17,9 @@ export function SyncAllButton() {
     setSuccess(false);
 
     try {
-      const res = await fetch("/api/brands/sync-all", {
-        method: "POST",
-      });
-
-      if (res.ok) {
-        setSuccess(true);
-        router.refresh();
-        setTimeout(() => setSuccess(false), 3000);
-      } else {
-        alert("Failed to sync stores");
-      }
+      await syncAllLocalBrands();
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
     } catch (e) {
       console.error("Sync all failed", e);
     } finally {

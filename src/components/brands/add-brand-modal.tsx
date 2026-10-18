@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Plus, X, Globe, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/context/language-context";
+import { addOrSyncStoreByUrl } from "@/lib/local-db";
 
 const emptySubscribe = () => () => {};
 
@@ -32,36 +33,19 @@ export function AddBrandModal() {
     setSuccessMsg(null);
 
     try {
-      const res = await fetch("/api/brands/suggest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim() }),
-      });
+      const result = await addOrSyncStoreByUrl(url.trim());
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to add brand");
-      }
-
-      setSuccessMsg(data.message || "Brand added successfully!");
+      setSuccessMsg(result.message || "Brand added to your device!");
       setUrl("");
 
       setTimeout(() => {
         setIsOpen(false);
         setSuccessMsg(null);
-        const isRadar = window.location.search.includes("feed=radar");
         const isBrandsPage = window.location.pathname === "/brands";
-        if (isBrandsPage) {
-          router.refresh();
-        } else if (isRadar) {
-          router.push("/?feed=radar");
-          router.refresh();
-        } else {
+        if (!isBrandsPage) {
           router.push("/");
-          router.refresh();
         }
-      }, 500);
+      }, 400);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {

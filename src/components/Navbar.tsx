@@ -9,14 +9,14 @@ import { LanguageSwitcher } from "./layout/language-switcher";
 import { CurrencySwitcher } from "./layout/currency-switcher";
 import { useLanguage } from "@/context/language-context";
 import { getLocalFavorites } from "@/lib/favorites";
-import { Store, LayoutGrid, Radar, Heart, Menu, X } from "lucide-react";
+import { Store, LayoutGrid, Heart, Menu, X } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 
 function NavbarContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { lang, t } = useLanguage();
+  const { t } = useLanguage();
   const [favCount, setFavCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -31,7 +31,6 @@ function NavbarContent() {
   }, []);
 
   const isFavoritesOnly = searchParams.get("favorites") === "true";
-  const isRadarFeed = searchParams.get("feed") === "radar";
 
   const toggleFavorites = () => {
     const params = new URLSearchParams(searchParams.toString());
@@ -62,26 +61,13 @@ function NavbarContent() {
               href="/"
               prefetch={true}
               className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors ${
-                pathname === "/" && !isFavoritesOnly && !isRadarFeed
+                pathname === "/" && !isFavoritesOnly
                   ? "bg-muted font-bold text-foreground"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               }`}
             >
               <LayoutGrid className="w-3.5 h-3.5" />
               <span>{t.navCatalog}</span>
-            </Link>
-
-            <Link
-              href="/?feed=radar"
-              prefetch={true}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors ${
-                pathname === "/" && isRadarFeed
-                  ? "bg-emerald-500/10 border border-emerald-500/30 font-bold text-emerald-500"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-              }`}
-            >
-              <Radar className="w-3.5 h-3.5" />
-              <span>{t.navRadar || (lang === "uk" ? "Мій Радар" : "My Radar")}</span>
             </Link>
 
             <Link
@@ -173,31 +159,18 @@ function NavbarContent() {
       {/* Mobile Drawer Navigation Menu */}
       {mobileMenuOpen && (
         <div className="md:hidden border-b bg-background p-4 space-y-4 animate-in slide-in-from-top duration-200">
-          <div className="grid grid-cols-3 gap-2 font-semibold text-xs">
+          <div className="grid grid-cols-2 gap-2 font-semibold text-xs">
             <Link
               href="/"
               onClick={() => setMobileMenuOpen(false)}
               className={`p-3 rounded-xl flex items-center justify-center gap-1.5 border transition-colors ${
-                pathname === "/" && !isFavoritesOnly && !isRadarFeed
+                pathname === "/" && !isFavoritesOnly
                   ? "bg-primary/10 border-primary/30 text-primary font-bold"
                   : "bg-muted/20 border-border text-foreground"
               }`}
             >
               <LayoutGrid className="w-4 h-4" />
               <span>{t.navCatalog}</span>
-            </Link>
-
-            <Link
-              href="/?feed=radar"
-              onClick={() => setMobileMenuOpen(false)}
-              className={`p-3 rounded-xl flex items-center justify-center gap-1.5 border transition-colors ${
-                pathname === "/" && isRadarFeed
-                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500 font-bold"
-                  : "bg-muted/20 border-border text-foreground"
-              }`}
-            >
-              <Radar className="w-4 h-4" />
-              <span>{t.navRadar || (lang === "uk" ? "Радар" : "Radar")}</span>
             </Link>
 
             <Link

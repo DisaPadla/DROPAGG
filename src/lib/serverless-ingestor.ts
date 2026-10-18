@@ -258,3 +258,281 @@ export async function syncBrandServerless(brandId: string): Promise<number> {
   const result = await syncBrandChunkServerless(brandId, 1, 250);
   return result.processedCount;
 }
+
+export interface StatelessBrandMeta {
+  id: string;
+  name: string;
+  domain: string;
+  platformType: string;
+  syncStatus: "ACTIVE" | "SYNCING" | "FAILED";
+  baseCountry: string;
+  defaultCurrency: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StatelessScrapedVariant {
+  id: string;
+  size: string;
+  color: string;
+  sku: string;
+  availability: "IN_STOCK" | "OUT_OF_STOCK";
+  rawPrice: number;
+  compareAtPrice: number | null;
+  currency: string;
+  normalizedPrice: number;
+  createdAt?: string | null;
+}
+
+export interface StatelessScrapedProduct {
+  id: string;
+  brandId: string;
+  canonicalUrl: string;
+  externalId: string;
+  title: string;
+  description: string;
+  category: string;
+  mainImage: string;
+  createdAt: string | null;
+  brand: StatelessBrandMeta;
+  variants: StatelessScrapedVariant[];
+}
+
+export interface StatelessScrapeResult {
+  brand: StatelessBrandMeta;
+  products: StatelessScrapedProduct[];
+  page: number;
+  processedCount: number;
+  hasMore: boolean;
+  nextPage?: number;
+}
+
+/**
+ * Pure stateless scraper that fetches a page of products from a store and returns
+ * structured JSON directly to the browser without saving anything to a shared server database.
+ */
+export async function scrapeBrandChunkStateless(
+  brandInput: StatelessBrandMeta,
+  page: number = 1,
+  limit: number = 250
+): Promise<StatelessScrapeResult> {
+  const brand: StatelessBrandMeta = { ...brandInput };
+
+  if (page === 1 && brand.defaultCurrency === "USD" && brand.baseCountry === "US") {
+    try {
+      const locale = await detectStoreLocale(`https://${brand.domain}`);
+      if (locale.currency && locale.currency !== "USD") {
+        brand.defaultCurrency = locale.currency;
+      }
+      if (locale.country && locale.country !== "US") {
+        brand.baseCountry = locale.country;
+      }
+    } catch {
+      // Ignore locale detection fallback error
+    }
+  }
+
+  const scrapedProducts: StatelessScrapedProduct[] = [];
+  let hasMore = false;
+
+  if (brand.platformType !== "SHOPIFY") {
+    const targetUrl = `https://${brand.domain}`;
+    const res = await fetch(targetUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      },
+    });
+    const html = await res.text();
+    const $ = cheerio.load(html);
+
+    const productUrls = new Set<string>();
+    $("a").each((_, el) => {
+      const href = $(el).attr("href");
+      if (
+        href &&
+        (href.includes("/product") ||
+          href.includes("/tproduct") ||
+          href.includes("/item") ||
+          href.includes("/shop/") ||
+          href.includes("/catalog/"))
+      ) {
+        const fullUrl = href.startsWith("http")
+          ? href
+          : `https://${brand.domain}${href.startsWith("/") ? "" : "/"}${href}`;
+        productUrls.add(fullUrl);
+      }
+    });
+
+    const nowIso = new Date().toISOString();
+    for (const prodUrl of Array.from(productUrls).slice(0, 40)) {
+      try {
+        const meta = await extractMetadata(prodUrl);
+        if (!meta.title || !meta.price) continue;
+
+        const category = inferCategory(meta.title, "", [], meta.description);
+        const rawPrice = meta.price;
+        const compareAtPrice =
+          meta.compareAtPrice && Number.isFinite(meta.compareAtPrice) && meta.compareAtPrice > rawPrice
+            ? meta.compareAtPrice
+            : null;
+        const currency = meta.currency || brand.defaultCurrency || "USD";
+        const normalizedPrice = normalizePriceToUsd(rawPrice, currency);
+        const prodId = `prod_${brand.domain}_${Buffer.from(meta.url).toString("base64url").slice(0, 24)}`;
+
+        scrapedProducts.push({
+          id: prodId,
+          brandId: brand.id,
+          canonicalUrl: meta.url,
+          externalId: meta.url,
+          title: meta.title,
+          description: meta.description || "",
+          category,
+          mainImage: meta.mainImage || "",
+          createdAt: nowIso,
+          brand,
+          variants: [
+            {
+              id: `${prodId}_v_os`,
+              size: "OS",
+              color: "DEFAULT",
+              sku: meta.url,
+              availability: meta.availability === "OUT_OF_STOCK" ? "OUT_OF_STOCK" : "IN_STOCK",
+              rawPrice,
+              compareAtPrice,
+              currency,
+              normalizedPrice,
+              createdAt: nowIso,
+            },
+          ],
+        });
+      } catch (e) {
+        console.error(`[Stateless Scraper] Error scraping ${prodUrl}:`, e);
+      }
+    }
+    hasMore = false;
+  } else {
+    const feedUrl = `https://${brand.domain}/products.json?limit=${limit}&page=${page}`;
+    const response = await fetch(feedUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Failed fetching Shopify feed (${response.status}): ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const products = data.products || [];
+    hasMore = products.length === limit;
+
+    for (const sp of products) {
+      try {
+        const canonicalUrl = `https://${brand.domain}/products/${sp.handle}`;
+        const category = inferCategory(sp.title, sp.product_type, sp.tags, sp.body_html);
+        const prodId = `prod_${brand.domain}_${sp.id}`;
+        const createdAtIso = sp.published_at || sp.created_at || new Date().toISOString();
+
+        let sizeKey: "option1" | "option2" | "option3" | null = null;
+        let colorKey: "option1" | "option2" | "option3" | null = null;
+
+        if (Array.isArray(sp.options)) {
+          for (let i = 0; i < sp.options.length; i++) {
+            const name = (sp.options[i]?.name || "").toLowerCase();
+            const key = `option${i + 1}` as "option1" | "option2" | "option3";
+            if (name.includes("size") || name.includes("размер") || name.includes("розмір")) {
+              sizeKey = key;
+            } else if (
+              name.includes("color") ||
+              name.includes("colour") ||
+              name.includes("цвет") ||
+              name.includes("колір")
+            ) {
+              colorKey = key;
+            }
+          }
+        }
+
+        const variants: StatelessScrapedVariant[] = (sp.variants || []).map(
+          (sv: Record<string, unknown>) => {
+            const svId = String(sv.id || "");
+            const sku = String(sv.sku || svId);
+
+            let size = sizeKey
+              ? String(sv[sizeKey] || "")
+              : colorKey === "option1"
+              ? String(sv.option2 || "")
+              : String(sv.option1 || "");
+            let color = colorKey
+              ? String(sv[colorKey] || "")
+              : sizeKey === "option1"
+              ? String(sv.option2 || "")
+              : String(sv.option1 || "");
+
+            size = size || "OS";
+            color = color || "DEFAULT";
+
+            const rawPrice = parseFloat(String(sv.price || "0"));
+            const parsedCompareAt = sv.compare_at_price
+              ? parseFloat(String(sv.compare_at_price))
+              : null;
+            const compareAtPrice =
+              parsedCompareAt !== null &&
+              Number.isFinite(parsedCompareAt) &&
+              parsedCompareAt > rawPrice
+                ? parsedCompareAt
+                : null;
+            const availability: "IN_STOCK" | "OUT_OF_STOCK" = sv.available
+              ? "IN_STOCK"
+              : "OUT_OF_STOCK";
+
+            const normalizedPrice = normalizePriceToUsd(rawPrice, brand.defaultCurrency);
+
+            return {
+              id: `var_${brand.domain}_${svId}`,
+              size,
+              color,
+              sku,
+              availability,
+              rawPrice,
+              compareAtPrice,
+              currency: brand.defaultCurrency,
+              normalizedPrice,
+              createdAt: (sv.created_at as string) || createdAtIso,
+            };
+          }
+        );
+
+        const images = sp.images as { src?: string }[] | undefined;
+        scrapedProducts.push({
+          id: prodId,
+          brandId: brand.id,
+          canonicalUrl,
+          externalId: String(sp.id),
+          title: String(sp.title || ""),
+          description: String(sp.body_html || ""),
+          category,
+          mainImage: images?.[0]?.src || "",
+          createdAt: createdAtIso,
+          brand,
+          variants,
+        });
+      } catch (err) {
+        console.error(`[Stateless Scraper] Product error ${sp.id}:`, err);
+      }
+    }
+  }
+
+  brand.syncStatus = hasMore ? "SYNCING" : "ACTIVE";
+
+  return {
+    brand,
+    products: scrapedProducts,
+    page,
+    processedCount: scrapedProducts.length,
+    hasMore,
+    nextPage: hasMore ? page + 1 : undefined,
+  };
+}
+

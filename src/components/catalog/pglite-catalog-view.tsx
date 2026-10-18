@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { getPGliteInstance } from "@/lib/pglite-client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink, Heart, Loader2, Sparkles, RotateCcw } from "lucide-react";
@@ -11,8 +10,6 @@ import { getLocalFavorites, toggleFavorite } from "@/lib/favorites";
 import {
   formatProductPrice,
   getProductPriceInUsd,
-  resolveVariantCurrency,
-  getVariantPriceInUsd,
 } from "@/lib/currency";
 import {
   appendUtmParams,
@@ -27,7 +24,6 @@ import {
   getEffectiveProductPrice,
 } from "@/lib/size-filter";
 import { getProductDropBadges } from "@/lib/drop-events";
-
 import { LocalCatalogProduct, LocalCatalogVariant } from "@/lib/local-first-storage";
 
 interface PGliteCatalogViewProps {
@@ -42,28 +38,6 @@ interface PGliteCatalogViewProps {
   maxPriceFilter?: number;
   sortBy?: string;
   selectedGender?: string;
-}
-
-interface PGliteQueryClient {
-  query: <R = Record<string, unknown>>(
-    sql: string,
-    params?: unknown[]
-  ) => Promise<{ rows?: R[] }>;
-}
-
-interface PGliteProductRow {
-  id: string;
-  title: string;
-  description: string | null;
-  category: string;
-  mainImage: string | null;
-  canonicalUrl: string;
-  createdAt: string | Date | null;
-  brandId: string;
-  brandName: string;
-  brandDomain: string;
-  brandDefaultCurrency: string;
-  variants: LocalCatalogVariant[];
 }
 
 const ITEMS_PER_CHUNK = 18;
@@ -100,7 +74,6 @@ function PGliteCatalogViewContent({
       ? urlInStockParam === "true"
       : Boolean(propInStockOnly);
 
-  // Restrict queried brands to the active feed's availableBrands (e.g. My Radar vs Explore)
   const effectiveBrands =
     selectedBrands.length > 0
       ? availableBrands.length > 0
@@ -116,18 +89,10 @@ function PGliteCatalogViewContent({
   const activeSizesKey = JSON.stringify(activeSizes);
   const filterResetKey = `${availableBrandsKey}|${selectedBrandsKey}|${selectedCategoriesKey}|${activeSizesKey}|${activeInStockOnly}|${maxPriceFilter ?? ""}|${sortBy}|${selectedGender}|${isFavoritesOnly}`;
 
-  const [products, setProducts] = useState<LocalCatalogProduct[]>(initialProducts);
-  const [prevInitialProducts, setPrevInitialProducts] =
-    useState<LocalCatalogProduct[]>(initialProducts);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [visibleCount, setVisibleCount] = useState<number>(ITEMS_PER_CHUNK);
   const [prevFilterResetKey, setPrevFilterResetKey] = useState<string>(filterResetKey);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-
-  if (initialProducts !== prevInitialProducts) {
-    setPrevInitialProducts(initialProducts);
-    setProducts(initialProducts);
-  }
 
   if (filterResetKey !== prevFilterResetKey) {
     setPrevFilterResetKey(filterResetKey);
@@ -144,303 +109,19 @@ function PGliteCatalogViewContent({
     return () => window.removeEventListener("dropagg_favorites_change", updateFavs);
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    async function syncAndQueryPGlite() {
-      try {
-        const pglitePromise = getPGliteInstance();
-        const timeoutPromise = new Promise<null>((_, reject) =>
-          setTimeout(() => reject(new Error("PGlite WASM timeout")), 1500)
-        );
-
-        const pglite = (await Promise.race([
-          pglitePromise,
-          timeoutPromise,
-        ])) as PGliteQueryClient | null;
-
-        if (!pglite) return;
-
-        if (initialProducts && initialProducts.length > 0) {
-          for (const p of initialProducts) {
-            if (p.brand) {
-              await pglite.query(
-                `INSERT INTO brands (id, name, domain, platform_type, sync_status, base_country, default_currency)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-                 ON CONFLICT (id) DO UPDATE SET name = $2, domain = $3, base_country = $6, default_currency = $7`,
-                [
-                  p.brand.id,
-                  p.brand.name,
-                  p.brand.domain,
-                  p.brand.platformType || "SHOPIFY",
-                  p.brand.syncStatus || "ACTIVE",
-                  p.brand.baseCountry || "US",
-                  p.brand.defaultCurrency || "",
-                ]
-              );
-            }
-
-            await pglite.query(
-              `INSERT INTO products (id, brand_id, canonical_url, external_id, title, description, category, main_image, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-               ON CONFLICT (id) DO UPDATE SET title = $5, category = $7, main_image = $8, canonical_url = $3, created_at = COALESCE($9, products.created_at)`,
-              [
-                p.id,
-                p.brandId,
-                p.canonicalUrl || "",
-                p.externalId || "",
-                p.title,
-                p.description || "",
-                p.category || "OTHER",
-                p.mainImage || "",
-                p.createdAt || null,
-              ]
-            );
-
-            if (p.variants && p.variants.length > 0) {
-              const brandCurr = p.brand?.defaultCurrency || "USD";
-              for (const v of p.variants) {
-                const resolvedCurr = resolveVariantCurrency(v, brandCurr);
-                const resolvedNormPrice = getVariantPriceInUsd(v, brandCurr);
-                await pglite.query(
-                  `INSERT INTO product_variants (id, product_id, size, color, sku, availability, raw_price, compare_at_price, currency, normalized_price)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                   ON CONFLICT (id) DO UPDATE SET availability = $6, raw_price = $7, compare_at_price = $8, currency = $9, normalized_price = $10`,
-                  [
-                    v.id,
-                    p.id,
-                    v.size,
-                    v.color,
-                    v.sku || "",
-                    v.availability,
-                    v.rawPrice,
-                    v.compareAtPrice ?? null,
-                    resolvedCurr,
-                    resolvedNormPrice,
-                  ]
-                );
-
-                if (Array.isArray(v.dropEvents)) {
-                  for (const de of v.dropEvents) {
-                    if (!de?.id) continue;
-                    await pglite.query(
-                      `INSERT INTO drop_events (id, variant_id, previous_status, new_status, detected_at)
-                       VALUES ($1, $2, $3, $4, $5)
-                       ON CONFLICT (id) DO NOTHING`,
-                      [
-                        de.id,
-                        v.id,
-                        de.previousStatus,
-                        de.newStatus,
-                        de.detectedAt || null,
-                      ]
-                    );
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        const parsedAvailBrands: string[] = JSON.parse(availableBrandsKey);
-        const parsedSelBrands: string[] = JSON.parse(selectedBrandsKey);
-        const parsedSelCategories: string[] = JSON.parse(selectedCategoriesKey);
-        const parsedActiveSizes: string[] = JSON.parse(activeSizesKey);
-
-        const queryBrands =
-          parsedSelBrands.length > 0
-            ? parsedAvailBrands.length > 0
-              ? parsedSelBrands.filter((b) => parsedAvailBrands.includes(b))
-              : parsedSelBrands
-            : parsedAvailBrands;
-        const unmatchedBrand =
-          parsedSelBrands.length > 0 &&
-          parsedAvailBrands.length > 0 &&
-          queryBrands.length === 0;
-
-        if (unmatchedBrand) {
-          if (isMounted) {
-            setProducts([]);
-          }
-          return;
-        }
-
-        // Query PGlite in WASM memory
-        const sqlParams: unknown[] = [];
-        const conditions: string[] = [];
-
-        if (queryBrands.length > 0) {
-          sqlParams.push(queryBrands);
-          conditions.push(`b.name = ANY($${sqlParams.length})`);
-        }
-
-        if (parsedSelCategories.length > 0) {
-          sqlParams.push(parsedSelCategories);
-          conditions.push(`p.category = ANY($${sqlParams.length})`);
-        }
-
-        if (maxPriceFilter && maxPriceFilter > 0) {
-          sqlParams.push(maxPriceFilter);
-          conditions.push(
-            `EXISTS (
-              SELECT 1 FROM product_variants pv_price
-              WHERE pv_price.product_id = p.id
-                AND pv_price.normalized_price <= $${sqlParams.length}
-            )`
-          );
-        }
-
-        if (activeInStockOnly || parsedActiveSizes.length > 0) {
-          conditions.push(
-            `EXISTS (
-              SELECT 1 FROM product_variants pv_stock
-              WHERE pv_stock.product_id = p.id
-                AND pv_stock.availability = 'IN_STOCK'
-            )`
-          );
-        }
-
-        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-
-        let orderBy = "p.created_at DESC";
-        if (sortBy === "price_asc") {
-          orderBy = "MIN(pv.normalized_price) ASC NULLS LAST";
-        } else if (sortBy === "price_desc") {
-          orderBy = "MAX(pv.normalized_price) DESC NULLS LAST";
-        }
-
-        const result = await pglite.query<PGliteProductRow>(
-          `SELECT 
-            p.id, p.title, p.description, p.category, p.main_image as "mainImage", p.canonical_url as "canonicalUrl", p.created_at as "createdAt",
-            b.id as "brandId", b.name as "brandName", b.domain as "brandDomain", b.default_currency as "brandDefaultCurrency",
-            COALESCE(
-              json_agg(
-                json_build_object(
-                  'id', pv.id,
-                  'size', pv.size,
-                  'color', pv.color,
-                  'availability', pv.availability,
-                  'rawPrice', pv.raw_price,
-                  'compareAtPrice', pv.compare_at_price,
-                  'currency', pv.currency,
-                  'normalizedPrice', pv.normalized_price,
-                  'dropEvents', COALESCE(
-                    (
-                      SELECT json_agg(
-                        json_build_object(
-                          'id', de.id,
-                          'variantId', de.variant_id,
-                          'previousStatus', de.previous_status,
-                          'newStatus', de.new_status,
-                          'detectedAt', de.detected_at
-                        )
-                        ORDER BY de.detected_at DESC
-                      )
-                      FROM drop_events de
-                      WHERE de.variant_id = pv.id
-                    ),
-                    '[]'::json
-                  )
-                )
-              ) FILTER (WHERE pv.id IS NOT NULL),
-              '[]'::json
-            ) as variants
-          FROM products p
-          JOIN brands b ON p.brand_id = b.id
-          LEFT JOIN product_variants pv ON p.id = pv.product_id
-          ${whereClause}
-          GROUP BY p.id, b.id, b.name, b.domain, b.default_currency
-          ORDER BY ${orderBy}`,
-          sqlParams
-        );
-
-        if (isMounted && result && result.rows) {
-          const initialMap = new Map<string, LocalCatalogProduct>(
-            (initialProducts || []).map((ip: LocalCatalogProduct) => [ip.id, ip])
-          );
-          const mapped: LocalCatalogProduct[] = result.rows.map((row: PGliteProductRow) => {
-            const initialProd = initialMap.get(row.id);
-            const initialVariantMap = new Map<string, LocalCatalogVariant>(
-              (initialProd?.variants || []).map((iv: LocalCatalogVariant) => [iv.id, iv])
-            );
-            const mergedVariants: LocalCatalogVariant[] = (row.variants || []).map(
-              (v: LocalCatalogVariant) => {
-                const iv = initialVariantMap.get(v.id);
-                const dbDropEvents = Array.isArray(v.dropEvents) ? v.dropEvents : [];
-                const initialDropEvents = Array.isArray(iv?.dropEvents) ? iv.dropEvents : [];
-                return {
-                  ...v,
-                  rawPrice: v.rawPrice != null ? Number(v.rawPrice) : 0,
-                  compareAtPrice: v.compareAtPrice != null ? Number(v.compareAtPrice) : null,
-                  normalizedPrice: v.normalizedPrice != null ? Number(v.normalizedPrice) : 0,
-                  createdAt: iv?.createdAt ?? v.createdAt ?? null,
-                  dropEvents: initialDropEvents.length > 0 ? initialDropEvents : dbDropEvents,
-                  isRestocked: iv?.isRestocked,
-                };
-              }
-            );
-
-            const hydratedProduct: LocalCatalogProduct = {
-              id: row.id,
-              title: row.title,
-              description: row.description,
-              category: row.category,
-              mainImage: row.mainImage,
-              canonicalUrl: row.canonicalUrl,
-              createdAt:
-                initialProd !== undefined
-                  ? initialProd.createdAt ?? null
-                  : row.createdAt ?? null,
-              isNewDrop: initialProd?.isNewDrop,
-              isRestocked: initialProd?.isRestocked,
-              hasPriceDrop: initialProd?.hasPriceDrop,
-              restockedSizes: initialProd?.restockedSizes,
-              brand: {
-                id: row.brandId,
-                name: row.brandName,
-                domain: row.brandDomain,
-                defaultCurrency: row.brandDefaultCurrency,
-              },
-              variants: mergedVariants,
-            };
-
-            const computedBadges = getProductDropBadges(hydratedProduct);
-            return {
-              ...hydratedProduct,
-              isNewDrop: computedBadges.isNewDrop,
-              isRestocked: computedBadges.isRestocked,
-              hasPriceDrop: computedBadges.hasPriceDrop,
-              restockedSizes: computedBadges.restockedSizes,
-            };
-          });
-          setProducts(mapped);
-        }
-      } catch (err) {
-        console.warn("[PGlite Client View] WASM database query bypassed, using server initial props:", err);
-      }
-    }
-
-    syncAndQueryPGlite();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [
-    initialProducts,
-    availableBrandsKey,
-    selectedBrandsKey,
-    selectedCategoriesKey,
-    activeSizesKey,
-    activeInStockOnly,
-    maxPriceFilter,
-    sortBy,
-  ]);
-
   let displayProducts = hasUnmatchedBrandFilter
     ? []
     : effectiveBrands.length > 0
-    ? products.filter((p) => !p.brand?.name || effectiveBrands.includes(p.brand.name))
-    : products;
+    ? initialProducts.filter((p) => !p.brand?.name || effectiveBrands.includes(p.brand.name))
+    : initialProducts;
+
+  if (selectedCategories.length > 0) {
+    const lowerCats = selectedCategories.map((c) => c.toLowerCase());
+    displayProducts = displayProducts.filter((p) => {
+      const prodCat = (p.category || "").toLowerCase();
+      return lowerCats.some((cat) => prodCat.includes(cat));
+    });
+  }
 
   if (isFavoritesOnly) {
     displayProducts = displayProducts.filter((p) => favorites.includes(p.id));

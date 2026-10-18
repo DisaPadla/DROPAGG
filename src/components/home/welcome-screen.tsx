@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Flame, Sparkles, Globe, Zap, PackageCheck, Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/context/language-context";
+import { addOrSyncStoreByUrl } from "@/lib/local-db";
 
 const SAMPLE_BRANDS = [
   { name: "Riot Division", url: "https://riotdivision.tech" },
@@ -12,6 +14,7 @@ const SAMPLE_BRANDS = [
 ];
 
 export function WelcomeScreen() {
+  const router = useRouter();
   const { t } = useLanguage();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState<string | null>(null);
@@ -26,25 +29,15 @@ export function WelcomeScreen() {
     setStatusMessage(`${t.scanning || "Скануємо та додаємо магазин..."}`);
 
     try {
-      const res = await fetch("/api/brands/suggest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: targetUrl.trim() }),
-      });
+      const result = await addOrSyncStoreByUrl(targetUrl.trim());
+      setStatusMessage("Магазин збережено локально! Відкриваємо каталог...");
 
-      const data = await res.json();
-
-      if (!res.ok && !data.brand) {
-        throw new Error(data.error || "Failed to add store");
+      const brandName = result.brand?.name ? encodeURIComponent(result.brand.name) : "";
+      if (brandName) {
+        router.push(`/?brands=${brandName}`);
+      } else {
+        router.push("/");
       }
-
-      setStatusMessage("Магазин додано! Переходимо до каталогу...");
-
-      // Immediately navigate to main catalog page
-      const brandName = data.brand?.name ? encodeURIComponent(data.brand.name) : "";
-      const targetHref = brandName ? `/?brands=${brandName}&t=${Date.now()}` : `/?t=${Date.now()}`;
-
-      window.location.href = targetHref;
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to add store");
       setStatusMessage(null);
